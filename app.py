@@ -569,28 +569,42 @@ else:
                     st.write(f"💬 评论 {reply_count}")
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
-                # hover操作栏
+                                # hover操作栏
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
+                # 点赞按钮不变
                 if st.button("❤️", key=f"like_{item['id']}"):
                     add_like(item["id"])
                     st.rerun()
-                # 修复回复输入状态
+
+                # 楼中楼回复输入框（彻底修复KeyError）
                 input_key = f"reply_input_{item['id']}"
-                reply_input = st.text_input("楼中楼回复", value=st.session_state[input_key], key=input_key)
+                # 初始化key，不存在则设为空
+                if input_key not in st.session_state:
+                    st.session_state[input_key] = ""
+                # 去掉value=st.session_state[input_key]，只绑定key，不手动赋值
+                reply_input = st.text_input("楼中楼回复", key=input_key)
+
+                # 提交回复按钮
                 if st.button("提交回复", key=f"submit_reply_{item['id']}"):
-                    if reply_input.strip():
-                        t = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        insert_reply(item["id"], current_student, reply_input, t)
-                        st.session_state[input_key] = ""
-                        st.success("回复成功")
-                        st.rerun()
+                    content = reply_input.strip()
+                    if not content:
+                        st.warning("回复内容不能为空！")
                     else:
-                        st.warning("回复不能为空")
-                # 回复折叠下拉
+                        try:
+                            t = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            insert_reply(item["id"], current_student, content, t)
+                            # 不再手动清空state，页面刷新自动重置输入框
+                            st.success("回复发送成功！")
+                            st.rerun()
+                        except Exception as err:
+                            st.error(f"回复失败：{str(err)}")
+
+                # 回复折叠下拉框不变
                 if all_replies:
                     with st.expander(f"展开全部回复 ({reply_count})"):
                         for r in all_replies:
                             st.write(f"{r['writer']} ({r['time']})：{r['content']}")
+
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
