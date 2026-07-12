@@ -214,7 +214,18 @@ if "cache_ts_bottles" not in st.session_state: st.session_state.cache_ts_bottles
 if "wordcloud_img" not in st.session_state: st.session_state.wordcloud_img = None
 if "radar_fig" not in st.session_state: st.session_state.radar_fig = None
 
-CLASS_STUDENTS = ["张三", "李四", "王五", "赵六", "陈七"]
+CLASS_STUDENTS = [
+    '马浩然', '王一帆', '王原穗', '王韵琪', '卢芷清',
+    '冯孝楚', '伍梓晨', '刘卓轩', '刘倩影', '汤乐宜',
+    '李子杰', '李乐祺', '李辰', '李奕安', '李浩源',
+    '李想', '杨宸涵', '吴桂祺', '何泳琳', '邹丝羽',
+    '沈君铭', '张睿琪', '陈子昂', '陈天泽', '陈佳宜',
+    '武帅宇', '林璟昊', '罗洁颖', '罗钰琳', '罗森耀',
+    '罗颢畦', '郑熙潼', '赵宇', '施昕彤', '姚优烨',
+    '聂子岚', '莫怀浅', '凌浩宇', '高泓', '高梓铭',
+    '黄梓轩', '黄敏霞', '黄灏哲', '戚志邦', '温曈',
+    '谢安然', '赖昊林', '蔡芷菡', '潘佳岩', '潘柏晋'
+]
 
 # ===================== 懒加载工具函数（按需拉取，30秒缓存，解决多人并发卡顿） =====================
 def load_users():
