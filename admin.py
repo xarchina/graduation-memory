@@ -21,8 +21,12 @@ admin_css = """
     text-align: center;
     margin-bottom: 30px;
 }
+/* 危险按钮样式 */
 .danger-btn button {
     background-color: #e03131 !important;
+}
+.danger-btn button:hover {
+    background-color: #c92a2a !important;
 }
 .info-card {
     background: white;
@@ -156,12 +160,15 @@ def admin_dashboard():
         user_data = load_all_users()
         st.caption(f"注册总人数：{len(user_data)}")
         username_del = st.text_input("输入要删除的账号用户名")
-        if st.button("删除账号", type="danger"):
+        # 外层套div实现红色危险按钮
+        st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
+        if st.button("删除账号", type="secondary"):
             confirm = st.checkbox("确认删除该学生账号")
             if confirm:
                 supabase.table("user_accounts").delete().eq("username", username_del).execute()
                 st.success("账号已删除")
                 st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
         st.divider()
         # 展示所有账号
         for uname, info in user_data.items():
@@ -172,7 +179,7 @@ def admin_dashboard():
         st.subheader("互评评语管理")
         tag_list = load_all_tags()
         del_tag_id = st.number_input("删除评语ID", min_value=1)
-        if st.button("删除该条评语"):
+        if st.button("删除该条评语", type="primary"):
             supabase.table("tag_data").delete().eq("id", del_tag_id).execute()
             st.success("已删除")
             st.rerun()
@@ -188,7 +195,7 @@ def admin_dashboard():
             st.subheader("班级大事记")
             event_list = load_events()
             del_eid = st.number_input("删除大事记ID", min_value=1)
-            if st.button("删除大事记"):
+            if st.button("删除大事记", type="primary"):
                 supabase.table("class_events").delete().eq("id", del_eid).execute()
                 st.rerun()
             for e in event_list:
@@ -197,7 +204,7 @@ def admin_dashboard():
             st.subheader("漂流瓶管理")
             bottle_list = load_bottles()
             del_bid = st.number_input("删除漂流瓶ID", min_value=1)
-            if st.button("删除漂流瓶"):
+            if st.button("删除漂流瓶", type="primary"):
                 supabase.table("bottle_list").delete().eq("id", del_bid).execute()
                 st.rerun()
             for b in bottle_list[:20]:
@@ -216,7 +223,8 @@ def admin_dashboard():
             "一键清空所有业务数据（留言/评论/评语/漂流瓶/大事记）"
         ])
         clear_confirm = st.checkbox("我已确认风险，同意永久删除数据")
-        if st.button("执行清空", type="danger-btn") and clear_confirm:
+        st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
+        if st.button("执行清空", type="secondary") and clear_confirm:
             with st.spinner("正在清空数据..."):
                 if clear_opt == "forum_messages 全部留言（同步清空所有评论）":
                     supabase.table("forum_reply").delete().gt("id", 0).execute()
@@ -237,6 +245,7 @@ def admin_dashboard():
                     supabase.table("class_events").delete().gt("id", 0).execute()
             st.success("对应数据表数据已全部清空，表结构完整保留！")
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ===================== 程序入口 =====================
 if __name__ == "__main__":
