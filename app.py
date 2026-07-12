@@ -10,11 +10,12 @@ from datetime import datetime
 import random
 from supabase import create_client, Client
 import streamlit.components.v1 as components
-
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
+plt.rcParams['axes.unicode_minus'] = False
 # ===================== 页面基础配置 =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（保留原有风格，仅新增hover交互隐藏面板）
+# 全局暖系CSS（去掉多余矩形框、hover交互保留）
 warm_css = """
 <style>
 .stApp {
@@ -34,6 +35,7 @@ warm_css = """
     font-size: 16px;
     margin-bottom: 32px;
 }
+/* 去掉多余card-box，仅保留必要卡片样式 */
 .card-box {
     border: 1px solid #e8a8a8;
     border-radius: 16px;
@@ -115,13 +117,13 @@ hr {
 """
 st.markdown(warm_css, unsafe_allow_html=True)
 
-# 5秒全局自动刷新
+# 自动刷新改为30秒（大幅降低卡顿）
 st.markdown("""
 <script>
-setInterval(()=>window.location.reload(),5000)
+setInterval(()=>window.location.reload(),30000)
 </script>
 """, unsafe_allow_html=True)
-st.caption("🍅 每5秒自动同步全班数据")
+st.caption("🍅 每30秒自动同步全班数据")
 
 # ===================== Supabase 单例缓存（性能优化，仅初始化一次） =====================
 @st.cache_resource
@@ -440,20 +442,18 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（完全对标截图交互：长文折叠、底部三栏数据、hover交互面板） =====================
+    # ===================== 1. 班级留言墙（去掉多余矩形框、回复折叠、点赞改❤） =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容")
         st.divider()
         # 发帖区域
-        with st.container():
-            st.markdown('<div class="card-box">', unsafe_allow_html=True)
-            post_text = st.text_area("写下想和全班分享的话：", height=100)
-            st.subheader("上传图片（最多9张，自动压缩）")
-            upload_imgs = st.file_uploader("多选图片", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-            upload_video = st.file_uploader("上传短视频", type=["mp4", "mov"])
-            submit_btn = st.button("发布这条留言")
-            st.markdown('</div>', unsafe_allow_html=True)
+        post_text = st.text_area("写下想和全班分享的话：", height=100)
+        st.subheader("上传图片（最多9张，自动压缩）")
+        upload_imgs = st.file_uploader("多选图片", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+        upload_video = st.file_uploader("上传短视频", type=["mp4", "mov"])
+        submit_btn = st.button("发布这条留言")
+
         if submit_btn and post_text.strip():
             img_b64_list = []
             if upload_imgs and len(upload_imgs) <=9:
@@ -478,6 +478,7 @@ else:
             st.info("暂无匹配帖子")
         else:
             for item in forum_data:
+                # 去掉外层多余card-box，保留hover交互
                 st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 like_num = item.get("like_count", 0)
                 all_replies = get_replies_by_pid(item["id"])
@@ -513,9 +514,9 @@ else:
                     st.write(f"💬 评论 {reply_count}")
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
-                # 5. hover才显示的点赞、回复面板
+                # 5. hover才显示的点赞、回复面板（点赞改❤）
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                if st.button(f"点击点赞 #{item['id']}", key=f"like_{item['id']}"):
+                if st.button(f"❤️ 点赞", key=f"like_{item['id']}"):
                     add_like(item["id"])
                     st.rerun()
                 reply_input = st.text_input("楼中楼回复", key=f"reply_input_{item['id']}")
@@ -523,22 +524,20 @@ else:
                     t = datetime.now().strftime("%Y-%m-%d %H:%M")
                     insert_reply(item["id"], current_student, reply_input, t)
                     st.rerun()
+                # 回复折叠：点击展开才显示
                 if all_replies:
-                    st.divider()
-                    st.subheader("全部回复")
-                    for r in all_replies:
-                        st.write(f"{r['writer']} ({r['time']})：{r['content']}")
+                    with st.expander(f"展开全部回复 ({reply_count})"):
+                        for r in all_replies:
+                            st.write(f"{r['writer']} ({r['time']})：{r['content']}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
     # ===================== 2. 给同学写评语（自由输入，AI自动打分，无手动标签） =====================
     elif nav_menu == "给同学写评语":
         st.markdown("### 🏷️ 自由写下评语，AI自动解析性格维度")
-        st.markdown('<div class="card-box">', unsafe_allow_html=True)
         target_stu = st.selectbox("选择评价同学", CLASS_STUDENTS)
         comment_input = st.text_area("写下对TA的心里话、性格描述", height=120)
         submit_btn = st.button("保存评语")
-        st.markdown('</div>', unsafe_allow_html=True)
         if submit_btn and comment_input.strip():
             insert_tag(target_stu, current_student, comment_input)
             st.success(f"已为{target_stu}保存评语")
@@ -550,12 +549,11 @@ else:
             st.info("暂无评语")
         else:
             for t in target_tags[:3]:
-                st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 st.write(f"来自：{t['writer']}")
                 st.write(f"预览：{t['comment'][:60]}……")
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
 
-    # ===================== 3. 我的专属档案（AI词云+雷达图缓存，不重复渲染） =====================
+    # ===================== 3. 我的专属档案（修复雷达图中文显示） =====================
     elif nav_menu == "我的专属档案":
         st.markdown(f"### 💌 {current_student} 专属毕业档案（仅本人可见）")
         all_tag_list = st.session_state.cache_tags
@@ -581,8 +579,11 @@ else:
                 st.session_state.wordcloud_img = wc.to_image()
             st.markdown("#### 🔖 大家对你的描述词云")
             st.image(st.session_state.wordcloud_img, width=900)
-            # 雷达图缓存
+            # 雷达图缓存（修复中文显示）
             if st.session_state.radar_fig is None:
+                # 解决中文显示：设置中文字体
+                plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
+                plt.rcParams['axes.unicode_minus'] = False
                 labels = list(total_score.keys())
                 vals = list(total_score.values())
                 angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
@@ -602,21 +603,18 @@ else:
             # 全部评语展示
             st.markdown("#### 📩 全班写给你的所有心里话")
             for item in my_tags:
-                st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 st.write(f"评价人：{item['writer']}")
                 st.write(f"完整留言：{item['comment']}")
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
 
     # ===================== 4. 班级时光大事记（支持多图上传） =====================
     elif nav_menu == "班级时光大事记":
         st.markdown("### 📅 班级时光大事记，支持上传配图")
-        st.markdown('<div class="card-box">', unsafe_allow_html=True)
         event_date = st.date_input("事件发生日期")
         event_title = st.text_input("事件标题")
         event_detail = st.text_area("事件详情", height=100)
         event_imgs = st.file_uploader("上传配图（最多9张）", type=["png","jpg","jpeg"], accept_multiple_files=True)
         add_btn = st.button("存入时光册")
-        st.markdown('</div>', unsafe_allow_html=True)
         if add_btn and event_title.strip():
             img_list = []
             if event_imgs and len(event_imgs) <=9:
@@ -631,7 +629,6 @@ else:
             st.info("暂无记录")
         else:
             for ev in event_data:
-                st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 st.write(f"📆 {ev['event_date']} | 记录人：{ev['recorder']}")
                 st.subheader(ev["title"])
                 st.write(ev["detail"])
@@ -642,14 +639,13 @@ else:
                         img_bin = base64.b64decode(b64)
                         st.image(io.BytesIO(img_bin), width=200)
                     st.markdown('</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
 
     # ===================== 5. 星海漂流瓶（打捞动画+独立大展示区） =====================
     elif nav_menu == "星海漂流瓶":
         st.markdown("### 🌊 匿名漂流瓶 · 藏起毕业心事")
         col_throw, col_get = st.columns(2)
         with col_throw:
-            st.markdown('<div class="card-box">', unsafe_allow_html=True)
             bottle_text = st.text_area("写下心事投放星海", height=120)
             if st.button("投放漂流瓶"):
                 if bottle_text.strip():
@@ -657,9 +653,7 @@ else:
                     insert_bottle(bottle_text, now_t)
                     st.success("投放成功")
                     st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
         with col_get:
-            st.markdown('<div class="card-box">', unsafe_allow_html=True)
             st.subheader("随机打捞漂流瓶")
             if st.button("开始打捞"):
                 bottle_all = st.session_state.cache_bottles
@@ -671,7 +665,6 @@ else:
                     st.session_state.current_bottle = pick
                     st.session_state.bottle_anim = True
                     st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
         total_bottle = len(st.session_state.cache_bottles)
         st.info(f"当前星海共有 {total_bottle} 只漂流瓶")
         st.divider()
