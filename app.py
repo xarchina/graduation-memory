@@ -576,8 +576,6 @@ else:
                     st.rerun()
                 # 修复回复输入状态
                 input_key = f"reply_input_{item['id']}"
-                if input_key not in st.session_state:
-                    st.session_state[input_key] = ""
                 reply_input = st.text_input("楼中楼回复", value=st.session_state[input_key], key=input_key)
                 if st.button("提交回复", key=f"submit_reply_{item['id']}"):
                     if reply_input.strip():
