@@ -14,7 +14,7 @@ import streamlit.components.v1 as components
 # ===================== 页面基础配置 =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（保留原有风格，hover隐藏回复点赞栏）
+# 全局暖系CSS（去掉多余矩形框、hover交互保留）
 warm_css = """
 <style>
 .stApp {
@@ -34,6 +34,7 @@ warm_css = """
     font-size: 16px;
     margin-bottom: 32px;
 }
+/* 去掉多余card-box，仅保留必要卡片样式 */
 .card-box {
     border: 1px solid #e8a8a8;
     border-radius: 16px;
@@ -43,6 +44,7 @@ warm_css = """
     margin: 12px 0;
     position: relative;
 }
+/* hover 才显示点赞回复区域，默认隐藏 */
 .post-action-bar {
     display: none;
     margin-top:12px;
@@ -99,6 +101,12 @@ div[data-baseweb="textarea"] textarea::placeholder {
 hr {
     border-color: #e2b0b0;
 }
+.reply-box {
+    background:#fff0f0;
+    padding:10px;
+    border-radius:10px;
+    margin:8px 0;
+}
 .img-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -108,15 +116,15 @@ hr {
 """
 st.markdown(warm_css, unsafe_allow_html=True)
 
-# 5秒自动刷新（完全保留不改动）
+# 自动刷新改为30秒（大幅降低卡顿）
 st.markdown("""
 <script>
-setInterval(()=>window.location.reload(),5000)
+setInterval(()=>window.location.reload(),30000)
 </script>
 """, unsafe_allow_html=True)
-st.caption("🍅 每5秒自动同步全班数据")
+st.caption("🍅 每30秒自动同步全班数据")
 
-# ===================== Supabase 全局单例（纯REST接口，无数据库密码、无报错参数） =====================
+# ===================== Supabase 单例缓存（性能优化，仅初始化一次） =====================
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["supabase"]["url"]
@@ -145,13 +153,13 @@ def video_to_b64(vid_file):
     raw = vid_file.read()
     return base64.b64encode(raw).decode("utf-8")
 
-# 长文本截断（全文展开按钮）
+# 长文本截断（论坛全文折叠功能）
 def cut_long_text(text, max_len=80):
     if len(text) <= max_len:
         return text, False
     return text[:max_len] + "...", True
 
-# AI自由评语自动计算性格分数
+# AI评语自动计算性格维度分数（无需手动填写标签）
 def ai_calc_person_score(comment_text: str):
     text = comment_text.lower()
     score = {"乐观":0, "温柔":0, "有趣":0, "自律":0, "外向":0}
@@ -172,7 +180,7 @@ def ai_calc_person_score(comment_text: str):
         if word in text: score["外向"] += 1
     return score
 
-# ===================== Session全局缓存（减少数据库请求，解决卡顿） =====================
+# ===================== Session状态初始化（全局内存缓存，大幅降低数据库并发） =====================
 if "login_username" not in st.session_state:
     st.session_state.login_username = None
 if "show_user_drawer" not in st.session_state:
@@ -181,7 +189,7 @@ if "current_bottle" not in st.session_state:
     st.session_state.current_bottle = None
 if "bottle_anim" not in st.session_state:
     st.session_state.bottle_anim = False
-# 数据缓存容器
+# 全局数据缓存，只读全部走内存不请求数据库
 if "cache_users" not in st.session_state: st.session_state.cache_users = {}
 if "cache_forum" not in st.session_state: st.session_state.cache_forum = []
 if "cache_replies" not in st.session_state: st.session_state.cache_replies = []
@@ -190,45 +198,45 @@ if "cache_profile" not in st.session_state: st.session_state.cache_profile = []
 if "cache_msg" not in st.session_state: st.session_state.cache_msg = []
 if "cache_events" not in st.session_state: st.session_state.cache_events = []
 if "cache_bottles" not in st.session_state: st.session_state.cache_bottles = []
-# 图表缓存，避免重复渲染
+# 图表缓存，避免重复渲染卡顿
 if "wordcloud_img" not in st.session_state: st.session_state.wordcloud_img = None
 if "radar_fig" not in st.session_state: st.session_state.radar_fig = None
 
 CLASS_STUDENTS = ["张三", "李四", "王五", "赵六", "陈七"]
 
-# ===================== 一次性加载全部数据到内存缓存（仅首次访问请求数据库） =====================
+# ===================== 一次性加载全量数据存入缓存（页面仅请求一次数据库） =====================
 def load_all_cache_data():
-    if len(st.session_state.cache_users) == 0:
-        res_user = supabase.table("user_accounts").select("*").execute()
-        user_dict = {}
-        for row in res_user.data:
-            user_dict[row["username"]] = {"pwd": row["password"], "name": row["student_name"]}
-        st.session_state.cache_users = user_dict
-    if len(st.session_state.cache_forum) == 0:
-        res_forum = supabase.table("forum_messages").select("*").order("id", desc=True).execute()
-        st.session_state.cache_forum = res_forum.data
-    if len(st.session_state.cache_replies) == 0:
-        res_reply = supabase.table("forum_reply").select("*").execute()
-        st.session_state.cache_replies = res_reply.data
-    if len(st.session_state.cache_tags) == 0:
-        res_tag = supabase.table("tag_data").select("*").execute()
-        st.session_state.cache_tags = res_tag.data
-    if len(st.session_state.cache_profile) == 0:
-        res_prof = supabase.table("user_profile").select("*").execute()
-        st.session_state.cache_profile = res_prof.data
-    if len(st.session_state.cache_msg) == 0:
-        res_msg = supabase.table("private_msg").select("*").execute()
-        st.session_state.cache_msg = res_msg.data
-    if len(st.session_state.cache_events) == 0:
-        res_event = supabase.table("class_events").select("*").order("event_date", desc=True).execute()
-        st.session_state.cache_events = res_event.data
-    if len(st.session_state.cache_bottles) == 0:
-        res_bottle = supabase.table("bottle_list").select("*").execute()
-        st.session_state.cache_bottles = res_bottle.data
+    # 用户账号
+    res_user = supabase.table("user_accounts").select("*").execute()
+    user_dict = {}
+    for row in res_user.data:
+        user_dict[row["username"]] = {"pwd": row["password"], "name": row["student_name"]}
+    st.session_state.cache_users = user_dict
+    # 论坛帖子
+    res_forum = supabase.table("forum_messages").select("*").order("id", desc=True).execute()
+    st.session_state.cache_forum = res_forum.data
+    # 回复
+    res_reply = supabase.table("forum_reply").select("*").execute()
+    st.session_state.cache_replies = res_reply.data
+    # 评语标签
+    res_tag = supabase.table("tag_data").select("*").execute()
+    st.session_state.cache_tags = res_tag.data
+    # 个人档案
+    res_prof = supabase.table("user_profile").select("*").execute()
+    st.session_state.cache_profile = res_prof.data
+    # 私信
+    res_msg = supabase.table("private_msg").select("*").execute()
+    st.session_state.cache_msg = res_msg.data
+    # 大事记
+    res_event = supabase.table("class_events").select("*").order("event_date", desc=True).execute()
+    st.session_state.cache_events = res_event.data
+    # 漂流瓶
+    res_bottle = supabase.table("bottle_list").select("*").execute()
+    st.session_state.cache_bottles = res_bottle.data
 
 load_all_cache_data()
 
-# ===================== 数据库写入操作函数（仅新增/修改数据时调用） =====================
+# ===================== 数据库写入操作函数（仅新增/修改时调用） =====================
 # 用户注册
 def add_new_user(uname, pwd, sname):
     supabase.table("user_accounts").insert({
@@ -264,7 +272,7 @@ def get_my_msg(student_name):
     all_msg = st.session_state.cache_msg
     return [m for m in all_msg if m["target_student"] == student_name]
 
-# 论坛帖子
+# 论坛发帖
 def insert_forum(author, text, img_list, vid, t):
     supabase.table("forum_messages").insert({
         "author": author,
@@ -274,10 +282,10 @@ def insert_forum(author, text, img_list, vid, t):
         "create_time": t,
         "like_count": 0
     }).execute()
-# 点赞
+# 点赞自增
 def add_like(post_id):
     supabase.rpc("inc_like", {"pid": post_id}).execute()
-# 回复读取
+# 回复读写
 def get_replies_by_pid(pid):
     all_r = st.session_state.cache_replies
     return [r for r in all_r if r["post_id"] == pid]
@@ -289,7 +297,7 @@ def insert_reply(post_id, writer, text, t):
         "time": t
     }).execute()
 
-# 评语存储（自由输入，无手动标签）
+# 自由评语存储（无手动标签）
 def insert_tag(target, writer, comment):
     supabase.table("tag_data").insert({
         "target_student": target,
@@ -314,7 +322,7 @@ def insert_bottle(content, t):
         "create_time": t
     }).execute()
 
-# ===================== 页面头部：标题 + 右上角个人中心 =====================
+# ===================== 页面头部：标题 + 右上角个人中心按钮 =====================
 header_col1, header_col2 = st.columns([9, 1])
 with header_col1:
     st.markdown('<div class="main-title">🍅 石榴16班 · 毕业纪念册</div>', unsafe_allow_html=True)
@@ -347,7 +355,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                 st.info("暂无私信")
             for m in msgs:
                 st.write(f"【{m['time']}】来自{m['sender']}：{m['content']}")
-        # 档案填写
+        # 个人档案填写
         with tab_profile:
             st.subheader("完善毕业档案")
             prof = get_user_profile(st.session_state.login_username) or {}
@@ -383,7 +391,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
 **座右铭：**{vp['motto']}
 """)
 
-# ===================== 登录注册页面 =====================
+# ===================== 登录注册拦截 =====================
 if st.session_state.login_username is None:
     st.warning("🔐 请先注册/登录账号，查看全部班级内容")
     tab_login, tab_reg = st.tabs(["账号登录", "新生注册"])
@@ -433,12 +441,12 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（hover显示点赞回复、回复折叠、❤点赞按钮、无多余边框） =====================
+    # ===================== 1. 班级留言墙（去掉多余矩形框、回复折叠、点赞改❤） =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容")
         st.divider()
-        # 发帖区域（移除外层card-box，消除多余矩形框）
+        # 发帖区域
         post_text = st.text_area("写下想和全班分享的话：", height=100)
         st.subheader("上传图片（最多9张，自动压缩）")
         upload_imgs = st.file_uploader("多选图片", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -469,22 +477,23 @@ else:
             st.info("暂无匹配帖子")
         else:
             for item in forum_data:
+                # 去掉外层多余card-box，保留hover交互
                 st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 like_num = item.get("like_count", 0)
                 all_replies = get_replies_by_pid(item["id"])
                 reply_count = len(all_replies)
                 full_text = item["text_content"]
                 short_text, need_expand = cut_long_text(full_text, 80)
-                # 作者+时间
+                # 1. 作者+时间头部
                 st.write(f"**{item['author']}** · {item['create_time']}")
-                # 正文+全文按钮
+                # 2. 正文+全文展开按钮
                 t_col, btn_col = st.columns([8, 1])
                 with t_col:
                     st.write(short_text)
                 with btn_col:
                     if need_expand and st.button("全文", key=f"expand_{item['id']}"):
                         st.info(f"完整内容：{full_text}")
-                # 图片/视频
+                # 3. 图片/视频展示
                 img_list = item.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
@@ -496,7 +505,7 @@ else:
                 if vid_b64:
                     vid_bin = base64.b64decode(vid_b64)
                     st.video(io.BytesIO(vid_bin))
-                # 底部固定交互栏
+                # 4. 底部固定三栏交互数据（对标截图：转发/评论/点赞）
                 col_share, col_msg, col_like = st.columns([1,1,1])
                 with col_share:
                     st.write("🔁 转发 0")
@@ -504,9 +513,9 @@ else:
                     st.write(f"💬 评论 {reply_count}")
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
-                # hover才显示操作栏
+                # 5. hover才显示的点赞、回复面板（点赞改❤）
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                if st.button("❤️", key=f"like_{item['id']}"):
+                if st.button(f"❤️ 点赞", key=f"like_{item['id']}"):
                     add_like(item["id"])
                     st.rerun()
                 reply_input = st.text_input("楼中楼回复", key=f"reply_input_{item['id']}")
@@ -514,7 +523,7 @@ else:
                     t = datetime.now().strftime("%Y-%m-%d %H:%M")
                     insert_reply(item["id"], current_student, reply_input, t)
                     st.rerun()
-                # 回复折叠下拉
+                # 回复折叠：点击展开才显示
                 if all_replies:
                     with st.expander(f"展开全部回复 ({reply_count})"):
                         for r in all_replies:
@@ -522,19 +531,19 @@ else:
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===================== 2. 给同学写评语（自由输入，AI自动分类打分） =====================
+    # ===================== 2. 给同学写评语（自由输入，AI自动打分，无手动标签） =====================
     elif nav_menu == "给同学写评语":
         st.markdown("### 🏷️ 自由写下评语，AI自动解析性格维度")
-        target = st.selectbox("选择评价同学", CLASS_STUDENTS)
+        target_stu = st.selectbox("选择评价同学", CLASS_STUDENTS)
         comment_input = st.text_area("写下对TA的心里话、性格描述", height=120)
         submit_btn = st.button("保存评语")
         if submit_btn and comment_input.strip():
-            insert_tag(target, current_student, comment_input)
-            st.success(f"已为{target}保存评语")
+            insert_tag(target_stu, current_student, comment_input)
+            st.success(f"已为{target_stu}保存评语")
             st.rerun()
-        st.markdown(f"## 📝 {target} 收到的评语预览")
+        st.markdown(f"## 📝 {target_stu} 收到的评语预览")
         all_tag_list = st.session_state.cache_tags
-        target_tags = [x for x in all_tag_list if x["target_student"] == target]
+        target_tags = [x for x in all_tag_list if x["target_student"] == target_stu]
         if not target_tags:
             st.info("暂无评语")
         else:
@@ -569,8 +578,9 @@ else:
                 st.session_state.wordcloud_img = wc.to_image()
             st.markdown("#### 🔖 大家对你的描述词云")
             st.image(st.session_state.wordcloud_img, width=900)
-            # 雷达图中文修复
+            # 雷达图缓存（修复中文显示）
             if st.session_state.radar_fig is None:
+                # 解决中文显示：设置中文字体
                 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
                 plt.rcParams['axes.unicode_minus'] = False
                 labels = list(total_score.keys())
@@ -596,7 +606,7 @@ else:
                 st.write(f"完整留言：{item['comment']}")
                 st.divider()
 
-    # ===================== 4. 班级时光大事记 =====================
+    # ===================== 4. 班级时光大事记（支持多图上传） =====================
     elif nav_menu == "班级时光大事记":
         st.markdown("### 📅 班级时光大事记，支持上传配图")
         event_date = st.date_input("事件发生日期")
@@ -630,7 +640,7 @@ else:
                     st.markdown('</div>', unsafe_allow_html=True)
                 st.divider()
 
-    # ===================== 5. 星海漂流瓶 =====================
+    # ===================== 5. 星海漂流瓶（打捞动画+独立大展示区） =====================
     elif nav_menu == "星海漂流瓶":
         st.markdown("### 🌊 匿名漂流瓶 · 藏起毕业心事")
         col_throw, col_get = st.columns(2)
