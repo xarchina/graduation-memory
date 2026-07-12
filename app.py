@@ -114,13 +114,19 @@ hr {
 """
 st.markdown(warm_css, unsafe_allow_html=True)
 
-# 5秒自动刷新【完全保留，不修改时长】
+# 10秒持久自动刷新，解决切换页面/按钮点击后定时器消失问题
 st.markdown("""
 <script>
-setInterval(()=>window.location.reload(),5000)
+// 页面加载完成后启动定时器，不受streamlit局部rerun影响
+if (!window.globalRefreshTimer) {
+    // 10000毫秒 = 10秒
+    window.globalRefreshTimer = setInterval(() => {
+        window.location.reload();
+    }, 10000);
+}
 </script>
 """, unsafe_allow_html=True)
-st.caption("🍅 每5秒自动同步全班数据")
+st.caption("🍅 每10秒自动同步全班数据")
 
 # ===================== Supabase 全局单例（纯REST无长连接，解决连接耗尽） =====================
 @st.cache_resource
@@ -214,7 +220,7 @@ CLASS_STUDENTS = ["张三", "李四", "王五", "赵六", "陈七"]
 def load_users():
     now = datetime.now()
     # 缓存未过期直接返回内存数据
-    if st.session_state.cache_ts_users and (now - st.session_state.cache_ts_users) < timedelta(seconds=30):
+    if st.session_state.cache_ts_users and (now - st.session_state.cache_ts_users) < timedelta(seconds=9):
         return st.session_state.cache_users
     res = supabase.table("user_accounts").select("*").limit(200).execute()
     user_dict = {}
