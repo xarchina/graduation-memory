@@ -170,9 +170,9 @@ def admin_dashboard():
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
         st.divider()
-        # 展示所有账号
+        # 展示所有账号 【修复：info["student_name"] 替换原来 info["name"]】
         for uname, info in user_data.items():
-            st.write(f"用户名：{uname} | 姓名：{info['name']}")
+            st.write(f"用户名：{uname} | 姓名：{info['student_name']}")
 
     # 4. 评语管理
     with tab4:
