@@ -10,11 +10,12 @@ from datetime import datetime, timedelta
 import random
 from supabase import create_client, Client
 import streamlit.components.v1 as components
+from streamlit_image_zoom import image_zoom  # 新增：图片放大
 
 # ===================== 页面基础配置 =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（优化滚动、按钮、卡片体验）
+# 全局暖系CSS（新增：图片放大弹窗、下载按钮样式）
 warm_css = """
 <style>
 .stApp {
@@ -121,6 +122,16 @@ hr {
 .refresh-btn button:hover {
     background: #1971c2 !important;
 }
+/* 点赞人列表样式 */
+.liker-list {
+    font-size: 13px;
+    color: #666;
+    margin-top: 5px;
+}
+/* 下载按钮样式 */
+.download-btn {
+    margin-top: 5px;
+}
 </style>
 """
 st.markdown(warm_css, unsafe_allow_html=True)
@@ -128,9 +139,9 @@ st.markdown(warm_css, unsafe_allow_html=True)
 # ===================== 15秒自动局部刷新Fragment（稳定低负载） =====================
 @st.fragment(run_every=timedelta(seconds=15))
 def auto_sync_data():
-    # 仅清空留言、回复缓存，其余模块不影响，最小请求开销
     st.session_state.cache_ts_forum = None
     st.session_state.cache_ts_replies = None
+    st.session_state.cache_ts_likes = None  # 新增：点赞缓存
     st.caption("🔄 系统每15秒自动同步留言数据")
 
 auto_sync_data()
@@ -206,25 +217,27 @@ if "cache_profile" not in st.session_state: st.session_state.cache_profile = []
 if "cache_msg" not in st.session_state: st.session_state.cache_msg = []
 if "cache_events" not in st.session_state: st.session_state.cache_events = []
 if "cache_bottles" not in st.session_state: st.session_state.cache_bottles = []
+if "cache_likes" not in st.session_state: st.session_state.cache_likes = []  # 新增：点赞记录缓存
 
-# 缓存时间戳（统一8秒有效期，小于15秒自动刷新间隔）
+# 缓存时间戳
 cache_ts_list = [
     "cache_ts_users","cache_ts_forum","cache_ts_replies","cache_ts_tags",
-    "cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles"
+    "cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles",
+    "cache_ts_likes"  # 新增：点赞缓存时间戳
 ]
 for k in cache_ts_list:
     if k not in st.session_state:
         st.session_state[k] = None
 
-# 分页全局状态（留言分页、单帖子评论分页）
+# 分页全局状态
 if "forum_page" not in st.session_state:
     st.session_state.forum_page = 1
 if "forum_page_size" not in st.session_state:
-    st.session_state.forum_page_size = 10  # 每页10条帖子
+    st.session_state.forum_page_size = 10
 if "reply_page_map" not in st.session_state:
-    st.session_state.reply_page_map = {}  # key=帖子id，value=评论页码
+    st.session_state.reply_page_map = {}
 if "reply_page_size" not in st.session_state:
-    st.session_state.reply_page_size = 5  # 每条帖子下评论每页5条
+    st.session_state.reply_page_size = 5
 
 # 图表缓存
 if "wordcloud_img" not in st.session_state: st.session_state.wordcloud_img = None
@@ -243,7 +256,7 @@ CLASS_STUDENTS = [
     '谢安然', '赖昊林', '蔡芷菡', '潘佳岩', '潘柏晋'
 ]
 
-# ===================== 懒加载工具函数（统一8秒缓存） =====================
+# ===================== 懒加载工具函数 =====================
 def load_users():
     now = datetime.now()
     if st.session_state.cache_ts_users and (now - st.session_state.cache_ts_users) < timedelta(seconds=8):
@@ -260,7 +273,6 @@ def load_forum():
     now = datetime.now()
     if st.session_state.cache_ts_forum and (now - st.session_state.cache_ts_forum) < timedelta(seconds=8):
         return st.session_state.cache_forum
-    # 预加载全部数据，分页前端切片，数据库仅一次请求
     res = supabase.table("forum_messages").select("*").order("id", desc=True).limit(1000).execute()
     st.session_state.cache_forum = res.data
     st.session_state.cache_ts_forum = now
@@ -320,6 +332,16 @@ def load_bottle():
     st.session_state.cache_ts_bottles = now
     return res.data
 
+# 新增：加载点赞记录
+def load_likes():
+    now = datetime.now()
+    if st.session_state.cache_ts_likes and (now - st.session_state.cache_ts_likes) < timedelta(seconds=8):
+        return st.session_state.cache_likes
+    res = supabase.table("post_likes").select("*").limit(5000).execute()
+    st.session_state.cache_likes = res.data
+    st.session_state.cache_ts_likes = now
+    return res.data
+
 # ===================== 数据库写入函数 =====================
 def add_new_user(uname, pwd, sname):
     supabase.table("user_accounts").insert({
@@ -369,9 +391,39 @@ def insert_forum(author, text, img_list, vid, t):
     }).execute()
     st.session_state.cache_ts_forum = None
 
-def add_like(post_id):
+# 修改：点赞逻辑（记录用户，防重复）
+def add_like(post_id, username):
+    # 先检查是否已点赞
+    likes = load_likes()
+    already_liked = any(
+        l["post_id"] == post_id and l["username"] == username
+        for l in likes
+    )
+    if already_liked:
+        return False  # 已点赞，返回失败
+    
+    # 新增点赞记录
+    supabase.table("post_likes").insert({
+        "post_id": post_id,
+        "username": username,
+        "like_time": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }).execute()
+    
+    # 更新帖子点赞数
     supabase.rpc("inc_like", {"pid": post_id}).execute()
+    
+    # 清空缓存
+    st.session_state.cache_ts_likes = None
     st.session_state.cache_ts_forum = None
+    return True
+
+# 新增：获取帖子点赞人列表
+def get_likers(post_id):
+    likes = load_likes()
+    post_likes = [l for l in likes if l["post_id"] == post_id]
+    user_dict = load_users()
+    likers = [user_dict[l["username"]]["name"] for l in post_likes if l["username"] in user_dict]
+    return likers
 
 def get_replies_by_pid(pid):
     all_r = load_replies()
@@ -413,20 +465,21 @@ def insert_bottle(content, t):
     }).execute()
     st.session_state.cache_ts_bottles = None
 
-# ===================== 页面头部：标题 + 手动刷新按钮 =====================
+# ===================== 页面头部 =====================
 header_col1, header_col2, header_col3 = st.columns([8, 1, 1])
 with header_col1:
     st.markdown('<div class="main-title">🍅 石榴16班 · 毕业纪念册</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">十六岁的我们，岁岁常相见</div>', unsafe_allow_html=True)
 with header_col2:
-    # 手动刷新按钮：一键清空留言缓存，立刻拉取新数据
     st.markdown('<div class="refresh-btn">', unsafe_allow_html=True)
     if st.button("🔃 手动刷新", key="manual_refresh"):
         with st.spinner("正在同步最新留言..."):
             st.session_state.cache_ts_forum = None
             st.session_state.cache_ts_replies = None
+            st.session_state.cache_ts_likes = None
             load_forum()
             load_replies()
+            load_likes()
         st.success("✅ 数据已刷新完成！")
     st.markdown('</div>', unsafe_allow_html=True)
 with header_col3:
@@ -442,7 +495,6 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
         user_info = user_dict[st.session_state.login_username]
         current_student = user_info["name"]
         tab_msg, tab_profile, tab_view = st.tabs(["私信信箱", "我的毕业档案", "查看同学档案"])
-        # 私信
         with tab_msg:
             st.subheader("发送私信")
             target = st.selectbox("发给哪位同学", CLASS_STUDENTS)
@@ -458,7 +510,6 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                 st.info("暂无私信")
             for m in msgs:
                 st.write(f"【{m['time']}】来自{m['sender']}：{m['content']}")
-        # 个人档案填写
         with tab_profile:
             st.subheader("完善毕业档案")
             prof = get_user_profile(st.session_state.login_username) or {}
@@ -473,7 +524,6 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                     "motto": motto, "contact": contact
                 })
                 st.success("档案已保存")
-        # 查看他人档案
         with tab_view:
             view_target = st.selectbox("选择查看同学", CLASS_STUDENTS)
             all_u = load_users()
@@ -531,6 +581,7 @@ else:
     if st.button("退出登录"):
         st.session_state.login_username = None
         st.rerun()
+    
     # 顶部导航栏
     nav_menu = option_menu(
         menu_title=None,
@@ -545,7 +596,7 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（分页优化，解决大量数据卡顿） =====================
+    # ===================== 1. 班级留言墙（核心修改区） =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容", placeholder="输入关键词筛选留言")
@@ -573,7 +624,6 @@ else:
         # 帖子分页逻辑
         st.markdown("## 📜 全班所有人的留言")
         all_forum_raw = load_forum()
-        # 筛选搜索
         forum_filtered = []
         if search_key.strip():
             for item in all_forum_raw:
@@ -599,7 +649,6 @@ else:
         with pg3:
             st.caption(f"共 {total_post} 条留言，当前第 {st.session_state.forum_page}/{total_page} 页（每页{page_size}条）")
 
-        # 切片取当前页数据
         start_idx = (st.session_state.forum_page - 1) * page_size
         end_idx = start_idx + page_size
         forum_data = forum_filtered[start_idx:end_idx]
@@ -624,18 +673,39 @@ else:
                 with btn_col:
                     if need_expand and st.button("全文", key=f"expand_{item['id']}"):
                         st.info(f"完整内容：{full_text}")
-                # 图片/视频
+
+                # 图片展示（点击放大+下载）
                 img_list = item.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
-                    for b64 in img_list:
+                    for idx, b64 in enumerate(img_list):
                         img_bin = base64.b64decode(b64)
-                        st.image(io.BytesIO(img_bin), width=200)
+                        img = Image.open(io.BytesIO(img_bin))
+                        # 点击放大
+                        image_zoom(img, size=200, mode="dragmove")
+                        # 下载按钮
+                        st.download_button(
+                            label=f"📥 下载图片{idx+1}",
+                            data=img_bin,
+                            file_name=f"图片_{item['id']}_{idx+1}.jpg",
+                            mime="image/jpeg",
+                            key=f"download_img_{item['id']}_{idx}"
+                        )
                     st.markdown('</div>', unsafe_allow_html=True)
+
+                # 视频展示（下载）
                 vid_b64 = item.get("video")
                 if vid_b64:
                     vid_bin = base64.b64decode(vid_b64)
                     st.video(io.BytesIO(vid_bin))
+                    st.download_button(
+                        label="📥 下载视频",
+                        data=vid_bin,
+                        file_name=f"视频_{item['id']}.mp4",
+                        mime="video/mp4",
+                        key=f"download_vid_{item['id']}"
+                    )
+
                 # 底部交互栏
                 col_share, col_msg, col_like = st.columns([1,1,1])
                 with col_share:
@@ -645,20 +715,29 @@ else:
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
 
+                # 点赞人列表
+                likers = get_likers(item["id"])
+                if likers:
+                    st.markdown(f'<div class="liker-list">点赞人：{", ".join(likers)}</div>', unsafe_allow_html=True)
+
                 # hover操作栏
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                # 点赞按钮
+                
+                # 点赞按钮（防重复）
                 if st.button("❤️", key=f"like_{item['id']}"):
-                    add_like(item["id"])
+                    success = add_like(item["id"], st.session_state.login_username)
+                    if success:
+                        st.success("点赞成功！")
+                    else:
+                        st.warning("你已经点过赞啦～")
                     st.rerun()
 
-                # 楼中楼回复输入框（修复KeyError）
+                # 楼中楼回复
                 input_key = f"reply_input_{item['id']}"
                 if input_key not in st.session_state:
                     st.session_state[input_key] = ""
                 reply_input = st.text_input("楼中楼回复", key=input_key, placeholder="写下你的评论...")
 
-                # 提交回复
                 if st.button("提交回复", key=f"submit_reply_{item['id']}"):
                     content = reply_input.strip()
                     if not content:
@@ -672,9 +751,8 @@ else:
                         except Exception as err:
                             st.error(f"回复失败：{str(err)}")
 
-                # 评论分页展示
+                # 评论分页
                 if all_replies:
-                    # 初始化该帖子评论页码
                     pid = str(item["id"])
                     if pid not in st.session_state.reply_page_map:
                         st.session_state.reply_page_map[pid] = 1
@@ -688,7 +766,6 @@ else:
                     with st.expander(f"展开全部回复 ({reply_count}) — 第{rp}/{total_rp}页"):
                         for r in reply_page_data:
                             st.write(f"{r['writer']} ({r['time']})：{r['content']}")
-                        # 评论分页切换
                         r1, r2 = st.columns([1,1])
                         with r1:
                             if st.button("上一页评论", key=f"rp_prev_{pid}") and rp>1:
@@ -739,7 +816,6 @@ else:
                 single_score = ai_calc_person_score(t["comment"])
                 for k in total_score.keys():
                     total_score[k] += single_score[k]
-            # 词云缓存
             if st.session_state.wordcloud_img is None:
                 wc = WordCloud(
                     background_color="#fff7f2",
@@ -750,7 +826,6 @@ else:
                 st.session_state.wordcloud_img = wc.to_image()
             st.markdown("#### 🔖 大家对你的描述词云")
             st.image(st.session_state.wordcloud_img, width=900)
-            # 雷达图
             if st.session_state.radar_fig is None:
                 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
                 plt.rcParams['axes.unicode_minus'] = False
@@ -805,9 +880,17 @@ else:
                 img_list = ev.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
-                    for b64 in img_list:
+                    for idx, b64 in enumerate(img_list):
                         img_bin = base64.b64decode(b64)
-                        st.image(io.BytesIO(img_bin), width=200)
+                        img = Image.open(io.BytesIO(img_bin))
+                        image_zoom(img, size=200, mode="dragmove")
+                        st.download_button(
+                            label=f"📥 下载图片{idx+1}",
+                            data=img_bin,
+                            file_name=f"大事记_{ev['id']}_{idx+1}.jpg",
+                            mime="image/jpeg",
+                            key=f"download_event_{ev['id']}_{idx}"
+                        )
                     st.markdown('</div>', unsafe_allow_html=True)
                 st.divider()
 
