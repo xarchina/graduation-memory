@@ -10,12 +10,11 @@ from datetime import datetime, timedelta
 import random
 from supabase import create_client, Client
 import streamlit.components.v1 as components
-from streamlit_image_zoom import image_zoom  # 新增：图片放大
 
 # ===================== 页面基础配置 =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（新增：图片放大弹窗、下载按钮样式）
+# 全局暖系CSS
 warm_css = """
 <style>
 .stApp {
@@ -115,33 +114,27 @@ hr {
     grid-template-columns: repeat(3, 1fr);
     gap:8px;
 }
-/* 手动刷新按钮专用样式 */
 .refresh-btn button {
     background: #228be6 !important;
 }
 .refresh-btn button:hover {
     background: #1971c2 !important;
 }
-/* 点赞人列表样式 */
 .liker-list {
     font-size: 13px;
     color: #666;
-    margin-top: 5px;
-}
-/* 下载按钮样式 */
-.download-btn {
     margin-top: 5px;
 }
 </style>
 """
 st.markdown(warm_css, unsafe_allow_html=True)
 
-# ===================== 15秒自动局部刷新Fragment（稳定低负载） =====================
+# ===================== 15秒自动局部刷新Fragment =====================
 @st.fragment(run_every=timedelta(seconds=15))
 def auto_sync_data():
     st.session_state.cache_ts_forum = None
     st.session_state.cache_ts_replies = None
-    st.session_state.cache_ts_likes = None  # 新增：点赞缓存
+    st.session_state.cache_ts_likes = None
     st.caption("🔄 系统每15秒自动同步留言数据")
 
 auto_sync_data()
@@ -208,6 +201,10 @@ if "current_bottle" not in st.session_state:
 if "bottle_anim" not in st.session_state:
     st.session_state.bottle_anim = None
 
+# 大图弹窗缓存
+if "img_viewer" not in st.session_state:
+    st.session_state.img_viewer = {}
+
 # 数据缓存容器
 if "cache_users" not in st.session_state: st.session_state.cache_users = {}
 if "cache_forum" not in st.session_state: st.session_state.cache_forum = []
@@ -217,13 +214,13 @@ if "cache_profile" not in st.session_state: st.session_state.cache_profile = []
 if "cache_msg" not in st.session_state: st.session_state.cache_msg = []
 if "cache_events" not in st.session_state: st.session_state.cache_events = []
 if "cache_bottles" not in st.session_state: st.session_state.cache_bottles = []
-if "cache_likes" not in st.session_state: st.session_state.cache_likes = []  # 新增：点赞记录缓存
+if "cache_likes" not in st.session_state: st.session_state.cache_likes = []
 
 # 缓存时间戳
 cache_ts_list = [
     "cache_ts_users","cache_ts_forum","cache_ts_replies","cache_ts_tags",
     "cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles",
-    "cache_ts_likes"  # 新增：点赞缓存时间戳
+    "cache_ts_likes"
 ]
 for k in cache_ts_list:
     if k not in st.session_state:
@@ -332,7 +329,6 @@ def load_bottle():
     st.session_state.cache_ts_bottles = now
     return res.data
 
-# 新增：加载点赞记录
 def load_likes():
     now = datetime.now()
     if st.session_state.cache_ts_likes and (now - st.session_state.cache_ts_likes) < timedelta(seconds=8):
@@ -391,33 +387,21 @@ def insert_forum(author, text, img_list, vid, t):
     }).execute()
     st.session_state.cache_ts_forum = None
 
-# 修改：点赞逻辑（记录用户，防重复）
 def add_like(post_id, username):
-    # 先检查是否已点赞
     likes = load_likes()
-    already_liked = any(
-        l["post_id"] == post_id and l["username"] == username
-        for l in likes
-    )
+    already_liked = any(l["post_id"] == post_id and l["username"] == username for l in likes)
     if already_liked:
-        return False  # 已点赞，返回失败
-    
-    # 新增点赞记录
+        return False
     supabase.table("post_likes").insert({
         "post_id": post_id,
         "username": username,
         "like_time": datetime.now().strftime("%Y-%m-%d %H:%M")
     }).execute()
-    
-    # 更新帖子点赞数
     supabase.rpc("inc_like", {"pid": post_id}).execute()
-    
-    # 清空缓存
     st.session_state.cache_ts_likes = None
     st.session_state.cache_ts_forum = None
     return True
 
-# 新增：获取帖子点赞人列表
 def get_likers(post_id):
     likes = load_likes()
     post_likes = [l for l in likes if l["post_id"] == post_id]
@@ -486,6 +470,32 @@ with header_col3:
     if st.session_state.login_username:
         if st.button("👤 个人中心"):
             st.session_state.show_user_drawer = not st.session_state.show_user_drawer
+
+# ===================== 大图侧边滑窗渲染函数 =====================
+def render_image_viewer():
+    viewer_data = st.session_state.img_viewer
+    if not viewer_data:
+        return
+    with st.sidebar:
+        st.markdown("## 🖼️ 高清原图预览")
+        if st.button("❌ 关闭大图", key="close_img_viewer"):
+            st.session_state.img_viewer = {}
+            st.rerun()
+        bin_data = viewer_data["bin"]
+        filename = viewer_data["name"]
+        img = Image.open(io.BytesIO(bin_data))
+        st.image(img, use_column_width=True)
+        st.download_button(
+            label="📥 下载无损高清原图",
+            data=bin_data,
+            file_name=filename,
+            mime="image/jpeg",
+            key="download_full_img"
+        )
+        st.caption("原图无压缩，清晰度与上传文件完全一致")
+
+# 先渲染大图侧边栏（放在最上方，全局生效）
+render_image_viewer()
 
 # ===================== 右侧抽屉个人中心 =====================
 if st.session_state.show_user_drawer and st.session_state.login_username:
@@ -596,7 +606,7 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（核心修改区） =====================
+    # ===================== 1. 班级留言墙 =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容", placeholder="输入关键词筛选留言")
@@ -636,7 +646,6 @@ else:
         page_size = st.session_state.forum_page_size
         total_page = (total_post + page_size - 1) // page_size
 
-        # 分页控制器
         pg1, pg2, pg3 = st.columns([1,1,3])
         with pg1:
             if st.button("上一页") and st.session_state.forum_page > 1:
@@ -664,9 +673,7 @@ else:
                 full_text = item["text_content"]
                 short_text, need_expand = cut_long_text(full_text, 80)
 
-                # 作者+时间
                 st.write(f"**{item['author']}** · {item['create_time']}")
-                # 正文+全文按钮
                 t_col, btn_col = st.columns([8, 1])
                 with t_col:
                     st.write(short_text)
@@ -674,26 +681,24 @@ else:
                     if need_expand and st.button("全文", key=f"expand_{item['id']}"):
                         st.info(f"完整内容：{full_text}")
 
-                # 图片展示（点击放大+下载）
+                # 图片渲染：缩略图 + 点击打开侧边高清大图
                 img_list = item.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
                     for idx, b64 in enumerate(img_list):
                         img_bin = base64.b64decode(b64)
                         img = Image.open(io.BytesIO(img_bin))
-                        # 点击放大
-                        image_zoom(img, size=200, mode="dragmove")
-                        # 下载按钮
-                        st.download_button(
-                            label=f"📥 下载图片{idx+1}",
-                            data=img_bin,
-                            file_name=f"图片_{item['id']}_{idx+1}.jpg",
-                            mime="image/jpeg",
-                            key=f"download_img_{item['id']}_{idx}"
-                        )
+                        st.image(img, width=200)
+                        # 点击打开侧边大图滑窗
+                        if st.button(f"🔍 查看高清大图", key=f"open_img_{item['id']}_{idx}"):
+                            st.session_state.img_viewer = {
+                                "bin": img_bin,
+                                "name": f"留言_{item['id']}_图{idx+1}.jpg"
+                            }
+                            st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
-                # 视频展示（下载）
+                # 视频展示+下载
                 vid_b64 = item.get("video")
                 if vid_b64:
                     vid_bin = base64.b64decode(vid_b64)
@@ -706,7 +711,6 @@ else:
                         key=f"download_vid_{item['id']}"
                     )
 
-                # 底部交互栏
                 col_share, col_msg, col_like = st.columns([1,1,1])
                 with col_share:
                     st.write("🔁 转发 0")
@@ -715,15 +719,13 @@ else:
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
 
-                # 点赞人列表
+                # 展示全部点赞人
                 likers = get_likers(item["id"])
                 if likers:
                     st.markdown(f'<div class="liker-list">点赞人：{", ".join(likers)}</div>', unsafe_allow_html=True)
 
-                # hover操作栏
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                
-                # 点赞按钮（防重复）
+                # 点赞按钮，一人仅一次
                 if st.button("❤️", key=f"like_{item['id']}"):
                     success = add_like(item["id"], st.session_state.login_username)
                     if success:
@@ -743,13 +745,10 @@ else:
                     if not content:
                         st.warning("回复内容不能为空！")
                     else:
-                        try:
-                            t = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            insert_reply(item["id"], current_student, content, t)
-                            st.success("回复发送成功！")
-                            st.rerun()
-                        except Exception as err:
-                            st.error(f"回复失败：{str(err)}")
+                        t = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        insert_reply(item["id"], current_student, content, t)
+                        st.success("回复发送成功！")
+                        st.rerun()
 
                 # 评论分页
                 if all_replies:
@@ -883,14 +882,13 @@ else:
                     for idx, b64 in enumerate(img_list):
                         img_bin = base64.b64decode(b64)
                         img = Image.open(io.BytesIO(img_bin))
-                        image_zoom(img, size=200, mode="dragmove")
-                        st.download_button(
-                            label=f"📥 下载图片{idx+1}",
-                            data=img_bin,
-                            file_name=f"大事记_{ev['id']}_{idx+1}.jpg",
-                            mime="image/jpeg",
-                            key=f"download_event_{ev['id']}_{idx}"
-                        )
+                        st.image(img, width=200)
+                        if st.button(f"🔍 查看高清大图", key=f"open_event_{ev['id']}_{idx}"):
+                            st.session_state.img_viewer = {
+                                "bin": img_bin,
+                                "name": f"大事记_{ev['id']}_图{idx+1}.jpg"
+                            }
+                            st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
                 st.divider()
 

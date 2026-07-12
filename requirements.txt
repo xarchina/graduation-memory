@@ -1,6 +1,5 @@
 streamlit==1.38.0
 streamlit-option-menu==0.3.6
-streamlit-image-zoom
 wordcloud==1.9.3
 matplotlib
 pillow
