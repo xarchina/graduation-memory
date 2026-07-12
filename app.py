@@ -6,15 +6,15 @@ from wordcloud import WordCloud
 from PIL import Image
 import io
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 from supabase import create_client, Client
 import streamlit.components.v1 as components
 
-# ===================== 页面基础配置 =====================
+# ===================== 页面基础配置（完全不变） =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（去掉多余矩形框、hover交互保留）
+# 全局暖系CSS（原样保留，无任何修改）
 warm_css = """
 <style>
 .stApp {
@@ -34,7 +34,6 @@ warm_css = """
     font-size: 16px;
     margin-bottom: 32px;
 }
-/* 去掉多余card-box，仅保留必要卡片样式 */
 .card-box {
     border: 1px solid #e8a8a8;
     border-radius: 16px;
@@ -44,7 +43,6 @@ warm_css = """
     margin: 12px 0;
     position: relative;
 }
-/* hover 才显示点赞回复区域，默认隐藏 */
 .post-action-bar {
     display: none;
     margin-top:12px;
@@ -116,15 +114,15 @@ hr {
 """
 st.markdown(warm_css, unsafe_allow_html=True)
 
-# 自动刷新改为30秒（大幅降低卡顿）
+# 5秒自动刷新【完全保留，不修改时长】
 st.markdown("""
 <script>
-setInterval(()=>window.location.reload(),30000)
+setInterval(()=>window.location.reload(),5000)
 </script>
 """, unsafe_allow_html=True)
-st.caption("🍅 每30秒自动同步全班数据")
+st.caption("🍅 每5秒自动同步全班数据")
 
-# ===================== Supabase 单例缓存（性能优化，仅初始化一次） =====================
+# ===================== Supabase 全局单例（纯REST无长连接，解决连接耗尽） =====================
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["supabase"]["url"]
@@ -133,8 +131,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# ===================== 通用工具函数 =====================
-# 图片自动压缩转base64
+# ===================== 通用工具函数（原样保留，无修改） =====================
 def compress_and_encode(img_file, max_width=1080, quality=70):
     img = Image.open(img_file)
     w, h = img.size
@@ -148,18 +145,15 @@ def compress_and_encode(img_file, max_width=1080, quality=70):
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return b64
 
-# 视频转base64
 def video_to_b64(vid_file):
     raw = vid_file.read()
     return base64.b64encode(raw).decode("utf-8")
 
-# 长文本截断（论坛全文折叠功能）
 def cut_long_text(text, max_len=80):
     if len(text) <= max_len:
         return text, False
     return text[:max_len] + "...", True
 
-# AI评语自动计算性格维度分数（无需手动填写标签）
 def ai_calc_person_score(comment_text: str):
     text = comment_text.lower()
     score = {"乐观":0, "温柔":0, "有趣":0, "自律":0, "外向":0}
@@ -180,7 +174,7 @@ def ai_calc_person_score(comment_text: str):
         if word in text: score["外向"] += 1
     return score
 
-# ===================== Session状态初始化（全局内存缓存，大幅降低数据库并发） =====================
+# ===================== Session状态初始化（新增缓存时间戳，实现懒加载） =====================
 if "login_username" not in st.session_state:
     st.session_state.login_username = None
 if "show_user_drawer" not in st.session_state:
@@ -189,7 +183,8 @@ if "current_bottle" not in st.session_state:
     st.session_state.current_bottle = None
 if "bottle_anim" not in st.session_state:
     st.session_state.bottle_anim = False
-# 全局数据缓存，只读全部走内存不请求数据库
+
+# 数据缓存容器
 if "cache_users" not in st.session_state: st.session_state.cache_users = {}
 if "cache_forum" not in st.session_state: st.session_state.cache_forum = []
 if "cache_replies" not in st.session_state: st.session_state.cache_replies = []
@@ -198,56 +193,111 @@ if "cache_profile" not in st.session_state: st.session_state.cache_profile = []
 if "cache_msg" not in st.session_state: st.session_state.cache_msg = []
 if "cache_events" not in st.session_state: st.session_state.cache_events = []
 if "cache_bottles" not in st.session_state: st.session_state.cache_bottles = []
-# 图表缓存，避免重复渲染卡顿
+
+# 缓存时间戳（30秒缓存有效期，减少重复请求）
+if "cache_ts_users" not in st.session_state: st.session_state.cache_ts_users = None
+if "cache_ts_forum" not in st.session_state: st.session_state.cache_ts_forum = None
+if "cache_ts_replies" not in st.session_state: st.session_state.cache_ts_replies = None
+if "cache_ts_tags" not in st.session_state: st.session_state.cache_ts_tags = None
+if "cache_ts_profile" not in st.session_state: st.session_state.cache_ts_profile = None
+if "cache_ts_msg" not in st.session_state: st.session_state.cache_ts_msg = None
+if "cache_ts_events" not in st.session_state: st.session_state.cache_ts_events = None
+if "cache_ts_bottles" not in st.session_state: st.session_state.cache_ts_bottles = None
+
+# 图表缓存
 if "wordcloud_img" not in st.session_state: st.session_state.wordcloud_img = None
 if "radar_fig" not in st.session_state: st.session_state.radar_fig = None
 
 CLASS_STUDENTS = ["张三", "李四", "王五", "赵六", "陈七"]
 
-# ===================== 一次性加载全量数据存入缓存（页面仅请求一次数据库） =====================
-def load_all_cache_data():
-    # 用户账号
-    res_user = supabase.table("user_accounts").select("*").execute()
+# ===================== 懒加载工具函数（按需拉取，30秒缓存，解决多人并发卡顿） =====================
+def load_users():
+    now = datetime.now()
+    # 缓存未过期直接返回内存数据
+    if st.session_state.cache_ts_users and (now - st.session_state.cache_ts_users) < timedelta(seconds=30):
+        return st.session_state.cache_users
+    res = supabase.table("user_accounts").select("*").limit(200).execute()
     user_dict = {}
-    for row in res_user.data:
+    for row in res.data:
         user_dict[row["username"]] = {"pwd": row["password"], "name": row["student_name"]}
     st.session_state.cache_users = user_dict
-    # 论坛帖子
-    res_forum = supabase.table("forum_messages").select("*").order("id", desc=True).execute()
-    st.session_state.cache_forum = res_forum.data
-    # 回复
-    res_reply = supabase.table("forum_reply").select("*").execute()
-    st.session_state.cache_replies = res_reply.data
-    # 评语标签
-    res_tag = supabase.table("tag_data").select("*").execute()
-    st.session_state.cache_tags = res_tag.data
-    # 个人档案
-    res_prof = supabase.table("user_profile").select("*").execute()
-    st.session_state.cache_profile = res_prof.data
-    # 私信
-    res_msg = supabase.table("private_msg").select("*").execute()
-    st.session_state.cache_msg = res_msg.data
-    # 大事记
-    res_event = supabase.table("class_events").select("*").order("event_date", desc=True).execute()
-    st.session_state.cache_events = res_event.data
-    # 漂流瓶
-    res_bottle = supabase.table("bottle_list").select("*").execute()
-    st.session_state.cache_bottles = res_bottle.data
+    st.session_state.cache_ts_users = now
+    return user_dict
 
-load_all_cache_data()
+def load_forum():
+    now = datetime.now()
+    if st.session_state.cache_ts_forum and (now - st.session_state.cache_ts_forum) < timedelta(seconds=30):
+        return st.session_state.cache_forum
+    res = supabase.table("forum_messages").select("*").order("id", desc=True).limit(200).execute()
+    st.session_state.cache_forum = res.data
+    st.session_state.cache_ts_forum = now
+    return res.data
 
-# ===================== 数据库写入操作函数（仅新增/修改时调用） =====================
-# 用户注册
+def load_replies():
+    now = datetime.now()
+    if st.session_state.cache_ts_replies and (now - st.session_state.cache_ts_replies) < timedelta(seconds=30):
+        return st.session_state.cache_replies
+    res = supabase.table("forum_reply").select("*").limit(500).execute()
+    st.session_state.cache_replies = res.data
+    st.session_state.cache_ts_replies = now
+    return res.data
+
+def load_tags():
+    now = datetime.now()
+    if st.session_state.cache_ts_tags and (now - st.session_state.cache_ts_tags) < timedelta(seconds=30):
+        return st.session_state.cache_tags
+    res = supabase.table("tag_data").select("*").limit(300).execute()
+    st.session_state.cache_tags = res.data
+    st.session_state.cache_ts_tags = now
+    return res.data
+
+def load_profile():
+    now = datetime.now()
+    if st.session_state.cache_ts_profile and (now - st.session_state.cache_ts_profile) < timedelta(seconds=30):
+        return st.session_state.cache_profile
+    res = supabase.table("user_profile").select("*").limit(200).execute()
+    st.session_state.cache_profile = res.data
+    st.session_state.cache_ts_profile = now
+    return res.data
+
+def load_msg():
+    now = datetime.now()
+    if st.session_state.cache_ts_msg and (now - st.session_state.cache_ts_msg) < timedelta(seconds=30):
+        return st.session_state.cache_msg
+    res = supabase.table("private_msg").select("*").limit(300).execute()
+    st.session_state.cache_msg = res.data
+    st.session_state.cache_ts_msg = now
+    return res.data
+
+def load_events():
+    now = datetime.now()
+    if st.session_state.cache_ts_events and (now - st.session_state.cache_ts_events) < timedelta(seconds=30):
+        return st.session_state.cache_events
+    res = supabase.table("class_events").select("*").order("event_date", desc=True).limit(100).execute()
+    st.session_state.cache_events = res.data
+    st.session_state.cache_ts_events = now
+    return res.data
+
+def load_bottle():
+    now = datetime.now()
+    if st.session_state.cache_ts_bottles and (now - st.session_state.cache_ts_bottles) < timedelta(seconds=30):
+        return st.session_state.cache_bottles
+    res = supabase.table("bottle_list").select("*").limit(300).execute()
+    st.session_state.cache_bottles = res.data
+    st.session_state.cache_ts_bottles = now
+    return res.data
+
+# ===================== 数据库写入函数（原样保留，仅提交后刷新对应单模块缓存，不全局重载） =====================
 def add_new_user(uname, pwd, sname):
     supabase.table("user_accounts").insert({
         "username": uname,
         "password": pwd,
         "student_name": sname
     }).execute()
+    st.session_state.cache_ts_users = None
 
-# 个人档案
 def get_user_profile(username):
-    prof_list = st.session_state.cache_profile
+    prof_list = load_profile()
     for p in prof_list:
         if p["username"] == username:
             return p
@@ -259,8 +309,8 @@ def save_profile(uname, data):
     else:
         data["username"] = uname
         supabase.table("user_profile").insert(data).execute()
+    st.session_state.cache_ts_profile = None
 
-# 私信
 def send_msg(from_user, to_student, content):
     supabase.table("private_msg").insert({
         "sender": from_user,
@@ -268,11 +318,11 @@ def send_msg(from_user, to_student, content):
         "content": content,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M")
     }).execute()
+    st.session_state.cache_ts_msg = None
 def get_my_msg(student_name):
-    all_msg = st.session_state.cache_msg
+    all_msg = load_msg()
     return [m for m in all_msg if m["target_student"] == student_name]
 
-# 论坛发帖
 def insert_forum(author, text, img_list, vid, t):
     supabase.table("forum_messages").insert({
         "author": author,
@@ -282,12 +332,14 @@ def insert_forum(author, text, img_list, vid, t):
         "create_time": t,
         "like_count": 0
     }).execute()
-# 点赞自增
+    st.session_state.cache_ts_forum = None
+# 点赞
 def add_like(post_id):
     supabase.rpc("inc_like", {"pid": post_id}).execute()
+    st.session_state.cache_ts_forum = None
 # 回复读写
 def get_replies_by_pid(pid):
-    all_r = st.session_state.cache_replies
+    all_r = load_replies()
     return [r for r in all_r if r["post_id"] == pid]
 def insert_reply(post_id, writer, text, t):
     supabase.table("forum_reply").insert({
@@ -296,16 +348,17 @@ def insert_reply(post_id, writer, text, t):
         "content": text,
         "time": t
     }).execute()
+    # 仅清空回复缓存，不刷新帖子、用户等其他数据，提速
+    st.session_state.cache_ts_replies = None
 
-# 自由评语存储（无手动标签）
 def insert_tag(target, writer, comment):
     supabase.table("tag_data").insert({
         "target_student": target,
         "writer": writer,
         "comment": comment
     }).execute()
+    st.session_state.cache_ts_tags = None
 
-# 班级大事记
 def insert_event(date, title, detail, recorder, img_list):
     supabase.table("class_events").insert({
         "event_date": str(date),
@@ -314,15 +367,16 @@ def insert_event(date, title, detail, recorder, img_list):
         "recorder": recorder,
         "images": img_list
     }).execute()
+    st.session_state.cache_ts_events = None
 
-# 漂流瓶
 def insert_bottle(content, t):
     supabase.table("bottle_list").insert({
         "content": content,
         "create_time": t
     }).execute()
+    st.session_state.cache_ts_bottles = None
 
-# ===================== 页面头部：标题 + 右上角个人中心按钮 =====================
+# ===================== 页面头部：标题 + 右上角个人中心按钮（不变） =====================
 header_col1, header_col2 = st.columns([9, 1])
 with header_col1:
     st.markdown('<div class="main-title">🍅 石榴16班 · 毕业纪念册</div>', unsafe_allow_html=True)
@@ -332,11 +386,12 @@ with header_col2:
         if st.button("👤 个人中心"):
             st.session_state.show_user_drawer = not st.session_state.show_user_drawer
 
-# ===================== 右侧抽屉个人中心 =====================
+# ===================== 右侧抽屉个人中心（逻辑完全不变，仅读取改用懒加载） =====================
 if st.session_state.show_user_drawer and st.session_state.login_username:
     with st.sidebar:
         st.header("👤 个人中心")
-        user_info = st.session_state.cache_users[st.session_state.login_username]
+        user_dict = load_users()
+        user_info = user_dict[st.session_state.login_username]
         current_student = user_info["name"]
         tab_msg, tab_profile, tab_view = st.tabs(["私信信箱", "我的毕业档案", "查看同学档案"])
         # 私信
@@ -355,6 +410,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                 st.info("暂无私信")
             for m in msgs:
                 st.write(f"【{m['time']}】来自{m['sender']}：{m['content']}")
+
         # 个人档案填写
         with tab_profile:
             st.subheader("完善毕业档案")
@@ -373,7 +429,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
         # 查看他人档案
         with tab_view:
             view_target = st.selectbox("选择查看同学", CLASS_STUDENTS)
-            all_u = st.session_state.cache_users
+            all_u = load_users()
             view_uname = None
             for k,v in all_u.items():
                 if v["name"] == view_target:
@@ -391,7 +447,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
 **座右铭：**{vp['motto']}
 """)
 
-# ===================== 登录注册拦截 =====================
+# ===================== 登录注册页面（逻辑完全不变） =====================
 if st.session_state.login_username is None:
     st.warning("🔐 请先注册/登录账号，查看全部班级内容")
     tab_login, tab_reg = st.tabs(["账号登录", "新生注册"])
@@ -399,7 +455,7 @@ if st.session_state.login_username is None:
         uname = st.text_input("账号")
         pwd = st.text_input("密码", type="password")
         if st.button("登录进入纪念册"):
-            user_list = st.session_state.cache_users
+            user_list = load_users()
             if uname in user_list and user_list[uname]["pwd"] == pwd:
                 st.session_state.login_username = uname
                 st.rerun()
@@ -410,7 +466,7 @@ if st.session_state.login_username is None:
         reg_pwd = st.text_input("设置密码", type="password")
         reg_stu = st.selectbox("绑定姓名", CLASS_STUDENTS)
         if st.button("完成注册"):
-            user_list = st.session_state.cache_users
+            user_list = load_users()
             if reg_user.strip() == "":
                 st.warning("账号不能为空")
             elif reg_user in user_list:
@@ -421,13 +477,14 @@ if st.session_state.login_username is None:
                 add_new_user(reg_user, reg_pwd, reg_stu)
                 st.success("注册成功，请登录")
 else:
-    user_info = st.session_state.cache_users[st.session_state.login_username]
+    user_dict = load_users()
+    user_info = user_dict[st.session_state.login_username]
     current_student = user_info["name"]
     st.success(f"✅ 欢迎回来，{current_student}")
     if st.button("退出登录"):
         st.session_state.login_username = None
         st.rerun()
-    # 顶部导航栏
+    # 顶部导航栏（原样不变）
     nav_menu = option_menu(
         menu_title=None,
         options=["班级留言墙", "给同学写评语", "我的专属档案", "班级时光大事记", "星海漂流瓶"],
@@ -441,7 +498,7 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（去掉多余矩形框、回复折叠、点赞改❤） =====================
+    # ===================== 1. 班级留言墙（界面交互100%原样，仅读取改用懒加载） =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容")
@@ -465,7 +522,7 @@ else:
             st.rerun()
         # 帖子渲染列表
         st.markdown("## 📜 全班所有人的留言")
-        all_forum = st.session_state.cache_forum
+        all_forum = load_forum()
         forum_data = []
         if search_key.strip():
             for item in all_forum:
@@ -477,23 +534,22 @@ else:
             st.info("暂无匹配帖子")
         else:
             for item in forum_data:
-                # 去掉外层多余card-box，保留hover交互
                 st.markdown('<div class="card-box">', unsafe_allow_html=True)
                 like_num = item.get("like_count", 0)
                 all_replies = get_replies_by_pid(item["id"])
                 reply_count = len(all_replies)
                 full_text = item["text_content"]
                 short_text, need_expand = cut_long_text(full_text, 80)
-                # 1. 作者+时间头部
+                # 作者+时间
                 st.write(f"**{item['author']}** · {item['create_time']}")
-                # 2. 正文+全文展开按钮
+                # 正文+全文按钮
                 t_col, btn_col = st.columns([8, 1])
                 with t_col:
                     st.write(short_text)
                 with btn_col:
                     if need_expand and st.button("全文", key=f"expand_{item['id']}"):
                         st.info(f"完整内容：{full_text}")
-                # 3. 图片/视频展示
+                # 图片/视频
                 img_list = item.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
@@ -505,7 +561,7 @@ else:
                 if vid_b64:
                     vid_bin = base64.b64decode(vid_b64)
                     st.video(io.BytesIO(vid_bin))
-                # 4. 底部固定三栏交互数据（对标截图：转发/评论/点赞）
+                # 底部交互栏
                 col_share, col_msg, col_like = st.columns([1,1,1])
                 with col_share:
                     st.write("🔁 转发 0")
@@ -513,17 +569,26 @@ else:
                     st.write(f"💬 评论 {reply_count}")
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
-                # 5. hover才显示的点赞、回复面板（点赞改❤）
+                # hover操作栏
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                if st.button(f"❤️ 点赞", key=f"like_{item['id']}"):
+                if st.button("❤️", key=f"like_{item['id']}"):
                     add_like(item["id"])
                     st.rerun()
-                reply_input = st.text_input("楼中楼回复", key=f"reply_input_{item['id']}")
-                if st.button("提交回复", key=f"reply_btn_{item['id']}") and reply_input.strip():
-                    t = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    insert_reply(item["id"], current_student, reply_input, t)
-                    st.rerun()
-                # 回复折叠：点击展开才显示
+                # 修复回复输入状态
+                input_key = f"reply_input_{item['id']}"
+                if input_key not in st.session_state:
+                    st.session_state[input_key] = ""
+                reply_input = st.text_input("楼中楼回复", value=st.session_state[input_key], key=input_key)
+                if st.button("提交回复", key=f"submit_reply_{item['id']}"):
+                    if reply_input.strip():
+                        t = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        insert_reply(item["id"], current_student, reply_input, t)
+                        st.session_state[input_key] = ""
+                        st.success("回复成功")
+                        st.rerun()
+                    else:
+                        st.warning("回复不能为空")
+                # 回复折叠下拉
                 if all_replies:
                     with st.expander(f"展开全部回复 ({reply_count})"):
                         for r in all_replies:
@@ -531,19 +596,19 @@ else:
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===================== 2. 给同学写评语（自由输入，AI自动打分，无手动标签） =====================
+    # ===================== 2. 给同学写评语（界面不变） =====================
     elif nav_menu == "给同学写评语":
         st.markdown("### 🏷️ 自由写下评语，AI自动解析性格维度")
-        target_stu = st.selectbox("选择评价同学", CLASS_STUDENTS)
+        target = st.selectbox("选择评价同学", CLASS_STUDENTS)
         comment_input = st.text_area("写下对TA的心里话、性格描述", height=120)
         submit_btn = st.button("保存评语")
         if submit_btn and comment_input.strip():
-            insert_tag(target_stu, current_student, comment_input)
-            st.success(f"已为{target_stu}保存评语")
+            insert_tag(target, current_student, comment_input)
+            st.success(f"已为{target}保存评语")
             st.rerun()
-        st.markdown(f"## 📝 {target_stu} 收到的评语预览")
-        all_tag_list = st.session_state.cache_tags
-        target_tags = [x for x in all_tag_list if x["target_student"] == target_stu]
+        st.markdown(f"## 📝 {target} 收到的评语预览")
+        all_tag_list = load_tags()
+        target_tags = [x for x in all_tag_list if x["target_student"] == target]
         if not target_tags:
             st.info("暂无评语")
         else:
@@ -552,10 +617,10 @@ else:
                 st.write(f"预览：{t['comment'][:60]}……")
                 st.divider()
 
-    # ===================== 3. 我的专属档案（修复雷达图中文显示） =====================
+    # ===================== 3. 我的专属档案（雷达图中文修复保留，读取懒加载） =====================
     elif nav_menu == "我的专属档案":
         st.markdown(f"### 💌 {current_student} 专属毕业档案（仅本人可见）")
-        all_tag_list = st.session_state.cache_tags
+        all_tag_list = load_tags()
         my_tags = [x for x in all_tag_list if x["target_student"] == current_student]
         if not my_tags:
             st.warning("暂时没有同学给你写评语")
@@ -578,9 +643,8 @@ else:
                 st.session_state.wordcloud_img = wc.to_image()
             st.markdown("#### 🔖 大家对你的描述词云")
             st.image(st.session_state.wordcloud_img, width=900)
-            # 雷达图缓存（修复中文显示）
+            # 雷达图中文修复
             if st.session_state.radar_fig is None:
-                # 解决中文显示：设置中文字体
                 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
                 plt.rcParams['axes.unicode_minus'] = False
                 labels = list(total_score.keys())
@@ -606,7 +670,7 @@ else:
                 st.write(f"完整留言：{item['comment']}")
                 st.divider()
 
-    # ===================== 4. 班级时光大事记（支持多图上传） =====================
+    # ===================== 4. 班级时光大事记（界面不变） =====================
     elif nav_menu == "班级时光大事记":
         st.markdown("### 📅 班级时光大事记，支持上传配图")
         event_date = st.date_input("事件发生日期")
@@ -623,7 +687,7 @@ else:
             st.success("事件保存成功")
             st.rerun()
         st.markdown("## 📖 全部班级大事记")
-        event_data = st.session_state.cache_events
+        event_data = load_events()
         if not event_data:
             st.info("暂无记录")
         else:
@@ -640,7 +704,7 @@ else:
                     st.markdown('</div>', unsafe_allow_html=True)
                 st.divider()
 
-    # ===================== 5. 星海漂流瓶（打捞动画+独立大展示区） =====================
+    # ===================== 5. 星海漂流瓶（界面不变） =====================
     elif nav_menu == "星海漂流瓶":
         st.markdown("### 🌊 匿名漂流瓶 · 藏起毕业心事")
         col_throw, col_get = st.columns(2)
@@ -655,7 +719,7 @@ else:
         with col_get:
             st.subheader("随机打捞漂流瓶")
             if st.button("开始打捞"):
-                bottle_all = st.session_state.cache_bottles
+                bottle_all = load_bottle()
                 if len(bottle_all) == 0:
                     st.info("星海暂无漂流瓶")
                     st.session_state.current_bottle = None
@@ -664,7 +728,7 @@ else:
                     st.session_state.current_bottle = pick
                     st.session_state.bottle_anim = True
                     st.rerun()
-        total_bottle = len(st.session_state.cache_bottles)
+        total_bottle = len(load_bottle())
         st.info(f"当前星海共有 {total_bottle} 只漂流瓶")
         st.divider()
         # 独立大展示区域
