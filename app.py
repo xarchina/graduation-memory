@@ -234,7 +234,7 @@ def load_data(table_name, limit=1000):
     return data
 
 # 各表快捷加载
-def load_users(): return load_data("users", 200)
+def load_users(): return load_data("user_accounts", 200)
 def load_forum(): return load_data("forum_messages", 1000)
 def load_replies(): return load_data("forum_reply", 2000)
 def load_tags(): return load_data("tag_data", 300)
