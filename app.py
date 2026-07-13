@@ -93,12 +93,28 @@ supabase = init_supabase()
 # 登录核心
 st.session_state.setdefault("login_username", None)
 st.session_state.setdefault("show_user_drawer", False)
-# 缓存时间戳
-cache_ts = ["cache_ts_users","cache_ts_forum","cache_ts_replies","cache_ts_tags","cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles","cache_ts_collect","cache_ts_notice"]
-for k in cache_ts: st.session_state.setdefault(k, None)
-# 缓存容器
-cache_data = ["cache_users","cache_forum","cache_replies","cache_tags","cache_profile","cache_msg","cache_events","cache_bottles","cache_collect","cache_notice"]
-for k in cache_data: st.session_state.setdefault(k, {} if k == "cache_users" else [])
+# 缓存时间戳 统一初始化
+cache_ts_keys = [
+    "cache_ts_users", "cache_ts_forum", "cache_ts_replies", "cache_ts_tags",
+    "cache_ts_profile", "cache_ts_msg", "cache_ts_events", "cache_ts_bottles",
+    "cache_ts_collect", "cache_ts_notice"
+]
+for key in cache_ts_keys:
+    if key not in st.session_state:
+        st.session_state[key] = None
+
+# 缓存数据容器 统一初始化
+cache_data_keys = [
+    "cache_users", "cache_forum", "cache_replies", "cache_tags",
+    "cache_profile", "cache_msg", "cache_events", "cache_bottles",
+    "cache_collect", "cache_notice"
+]
+for key in cache_data_keys:
+    if key not in st.session_state:
+        if key == "cache_users":
+            st.session_state[key] = {}
+        else:
+            st.session_state[key] = []
 # 分页、弹窗状态
 st.session_state.setdefault("forum_page", 1)
 st.session_state.setdefault("forum_page_size", 10)
