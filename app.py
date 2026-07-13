@@ -14,7 +14,7 @@ import streamlit.components.v1 as components
 # ===================== 页面基础配置 =====================
 st.set_page_config(page_title="石榴16班毕业纪念册", page_icon="🍅", layout="wide")
 
-# 全局暖系CSS（优化滚动、按钮、卡片体验）
+# 全局暖系CSS（新增星光武将卡样式，统一风格）
 warm_css = """
 <style>
 .stApp {
@@ -121,6 +121,81 @@ hr {
 .refresh-btn button:hover {
     background: #1971c2 !important;
 }
+
+/* ========== 班级星光墙·三国杀武将卡 自定义样式 ========== */
+.star-card-wrap {
+    display: flex;
+    justify-content: center;
+}
+.star-card {
+    width: 240px;
+    border-radius: 18px;
+    background: linear-gradient(160deg, #fff3f0, #ffe4de);
+    border: 2px solid #e2a9a9;
+    box-shadow: 0 3px 12px rgba(200, 60, 60, 0.1);
+    overflow: hidden;
+    transition: 0.25s ease;
+    cursor: pointer;
+}
+.star-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 8px 20px rgba(200, 60, 60, 0.18);
+}
+.star-card-avatar-box {
+    width: 100%;
+    height: 220px;
+    background: #f8e6e3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+.star-card-avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.star-card-empty-avatar {
+    font-size: 80px;
+    color: #c86666;
+}
+.star-card-body {
+    padding: 14px;
+}
+.star-card-title {
+    font-size: 16px;
+    color: #b43838;
+    font-weight: 600;
+    text-align: center;
+    margin: 4px 0;
+}
+.star-card-name {
+    font-size: 14px;
+    color: #773333;
+    text-align: center;
+    margin-bottom: 10px;
+}
+.star-skill-item {
+    background: rgba(255,255,255,0.65);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin: 6px 0;
+}
+.star-skill-name {
+    font-weight: 600;
+    color: #c44444;
+    font-size: 14px;
+}
+.star-skill-desc {
+    font-size: 12px;
+    color: #553333;
+    line-height: 1.4;
+}
+.star-detail-modal {
+    padding: 24px;
+    border-radius: 20px;
+    background: #fff7f2;
+}
 </style>
 """
 st.markdown(warm_css, unsafe_allow_html=True)
@@ -128,9 +203,9 @@ st.markdown(warm_css, unsafe_allow_html=True)
 # ===================== 15秒自动局部刷新Fragment（稳定低负载） =====================
 @st.fragment(run_every=timedelta(seconds=15))
 def auto_sync_data():
-    # 仅清空留言、回复缓存，其余模块不影响，最小请求开销
     st.session_state.cache_ts_forum = None
     st.session_state.cache_ts_replies = None
+    st.session_state.cache_ts_starwall = None
     st.caption("🔄 系统每15秒自动同步留言数据")
 
 auto_sync_data()
@@ -196,6 +271,10 @@ if "current_bottle" not in st.session_state:
     st.session_state.current_bottle = None
 if "bottle_anim" not in st.session_state:
     st.session_state.bottle_anim = None
+# 星光墙状态
+if "cache_starwall" not in st.session_state: st.session_state.cache_starwall = []
+if "cache_ts_starwall" not in st.session_state: st.session_state.cache_ts_starwall = None
+if "current_star_detail" not in st.session_state: st.session_state.current_star_detail = None
 
 # 数据缓存容器
 if "cache_users" not in st.session_state: st.session_state.cache_users = {}
@@ -210,7 +289,7 @@ if "cache_bottles" not in st.session_state: st.session_state.cache_bottles = []
 # 缓存时间戳（统一8秒有效期，小于15秒自动刷新间隔）
 cache_ts_list = [
     "cache_ts_users","cache_ts_forum","cache_ts_replies","cache_ts_tags",
-    "cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles"
+    "cache_ts_profile","cache_ts_msg","cache_ts_events","cache_ts_bottles","cache_ts_starwall"
 ]
 for k in cache_ts_list:
     if k not in st.session_state:
@@ -260,7 +339,6 @@ def load_forum():
     now = datetime.now()
     if st.session_state.cache_ts_forum and (now - st.session_state.cache_ts_forum) < timedelta(seconds=8):
         return st.session_state.cache_forum
-    # 预加载全部数据，分页前端切片，数据库仅一次请求
     res = supabase.table("forum_messages").select("*").order("id", desc=True).limit(1000).execute()
     st.session_state.cache_forum = res.data
     st.session_state.cache_ts_forum = now
@@ -318,6 +396,16 @@ def load_bottle():
     res = supabase.table("bottle_list").select("*").limit(300).execute()
     st.session_state.cache_bottles = res.data
     st.session_state.cache_ts_bottles = now
+    return res.data
+
+# 星光墙加载函数
+def load_starwall():
+    now = datetime.now()
+    if st.session_state.cache_ts_starwall and (now - st.session_state.cache_ts_starwall) < timedelta(seconds=8):
+        return st.session_state.cache_starwall
+    res = supabase.table("star_wall").select("*").execute()
+    st.session_state.cache_starwall = res.data
+    st.session_state.cache_ts_starwall = now
     return res.data
 
 # ===================== 数据库写入函数 =====================
@@ -413,20 +501,46 @@ def insert_bottle(content, t):
     }).execute()
     st.session_state.cache_ts_bottles = None
 
+# 星光卡保存更新函数
+def save_star_card(username, student_name, avatar_b64, title, s1_name, s1_desc, s2_name, s2_desc, bio):
+    star_data = {
+        "username": username,
+        "student_name": student_name,
+        "avatar_b64": avatar_b64,
+        "title": title,
+        "skill1_name": s1_name,
+        "skill1_desc": s1_desc,
+        "skill2_name": s2_name,
+        "skill2_desc": s2_desc,
+        "bio": bio
+    }
+    all_star = load_starwall()
+    exist = False
+    for item in all_star:
+        if item["username"] == username:
+            exist = True
+            break
+    if exist:
+        supabase.table("star_wall").update(star_data).eq("username", username).execute()
+    else:
+        supabase.table("star_wall").insert(star_data).execute()
+    st.session_state.cache_ts_starwall = None
+
 # ===================== 页面头部：标题 + 手动刷新按钮 =====================
 header_col1, header_col2, header_col3 = st.columns([8, 1, 1])
 with header_col1:
     st.markdown('<div class="main-title">🍅 石榴16班 · 毕业纪念册</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">十六岁的我们，岁岁常相见</div>', unsafe_allow_html=True)
 with header_col2:
-    # 手动刷新按钮：一键清空留言缓存，立刻拉取新数据
     st.markdown('<div class="refresh-btn">', unsafe_allow_html=True)
     if st.button("🔃 手动刷新", key="manual_refresh"):
         with st.spinner("正在同步最新留言..."):
             st.session_state.cache_ts_forum = None
             st.session_state.cache_ts_replies = None
+            st.session_state.cache_ts_starwall = None
             load_forum()
             load_replies()
+            load_starwall()
         st.success("✅ 数据已刷新完成！")
     st.markdown('</div>', unsafe_allow_html=True)
 with header_col3:
@@ -434,14 +548,14 @@ with header_col3:
         if st.button("👤 个人中心"):
             st.session_state.show_user_drawer = not st.session_state.show_user_drawer
 
-# ===================== 右侧抽屉个人中心 =====================
+# ===================== 右侧抽屉个人中心（新增星光卡编辑Tab） =====================
 if st.session_state.show_user_drawer and st.session_state.login_username:
     with st.sidebar:
         st.header("👤 个人中心")
         user_dict = load_users()
         user_info = user_dict[st.session_state.login_username]
         current_student = user_info["name"]
-        tab_msg, tab_profile, tab_view = st.tabs(["私信信箱", "我的毕业档案", "查看同学档案"])
+        tab_msg, tab_profile, tab_starcard, tab_view = st.tabs(["私信信箱", "我的毕业档案", "编辑星光武将卡", "查看同学档案"])
         # 私信
         with tab_msg:
             st.subheader("发送私信")
@@ -458,6 +572,7 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                 st.info("暂无私信")
             for m in msgs:
                 st.write(f"【{m['time']}】来自{m['sender']}：{m['content']}")
+
         # 个人档案填写
         with tab_profile:
             st.subheader("完善毕业档案")
@@ -473,6 +588,44 @@ if st.session_state.show_user_drawer and st.session_state.login_username:
                     "motto": motto, "contact": contact
                 })
                 st.success("档案已保存")
+        # ========== 新增：星光武将卡编辑面板 ==========
+        with tab_starcard:
+            st.subheader("✨ 编辑你的星光武将卡（三国杀样式）")
+            all_star = load_starwall()
+            my_card = None
+            for item in all_star:
+                if item["username"] == st.session_state.login_username:
+                    my_card = item
+                    break
+            # 上传头像
+            avatar_file = st.file_uploader("上传武将头像", type=["png","jpg","jpeg"])
+            avatar_b64 = my_card["avatar_b64"] if my_card else ""
+            if avatar_file:
+                avatar_b64 = compress_and_encode(avatar_file, max_width=400, quality=80)
+            # 武将称号
+            title = st.text_input("武将称号", value=my_card.get("title","") if my_card else "", placeholder="例：石榴暖阳 / 班级卷王")
+            # 一技能
+            s1_name = st.text_input("一技能名称", value=my_card.get("skill1_name","") if my_card else "", placeholder="例：勤学")
+            s1_desc = st.text_area("一技能描述", value=my_card.get("skill1_desc","") if my_card else "", placeholder="例：上课专注，作业从不拖欠")
+            # 二技能
+            s2_name = st.text_input("二技能名称", value=my_card.get("skill2_name","") if my_card else "", placeholder="例：暖心")
+            s2_desc = st.text_area("二技能描述", value=my_card.get("skill2_desc","") if my_card else "", placeholder="例：乐于助人，经常安慰同学")
+            # 人物背景
+            bio = st.text_area("人物背景简介", value=my_card.get("bio","") if my_card else "", placeholder="简单介绍自己的性格、特长")
+            if st.button("保存星光卡"):
+                save_star_card(
+                    st.session_state.login_username,
+                    current_student,
+                    avatar_b64,
+                    title,
+                    s1_name,
+                    s1_desc,
+                    s2_name,
+                    s2_desc,
+                    bio
+                )
+                st.success("你的星光武将卡已更新，前往星光墙查看！")
+                st.rerun()
         # 查看他人档案
         with tab_view:
             view_target = st.selectbox("选择查看同学", CLASS_STUDENTS)
@@ -531,11 +684,11 @@ else:
     if st.button("退出登录"):
         st.session_state.login_username = None
         st.rerun()
-    # 顶部导航栏
+    # 顶部导航栏（新增星光墙菜单）
     nav_menu = option_menu(
         menu_title=None,
-        options=["班级留言墙", "给同学写评语", "我的专属档案", "班级时光大事记", "星海漂流瓶"],
-        icons=["chat-heart", "tag", "person-lines-fill", "calendar-heart", "water"],
+        options=["班级留言墙", "班级星光墙", "给同学写评语", "我的专属档案", "班级时光大事记", "星海漂流瓶"],
+        icons=["chat-heart", "star-fill", "tag", "person-lines-fill", "calendar-heart", "water"],
         default_index=0,
         orientation="horizontal",
         styles={
@@ -545,13 +698,12 @@ else:
         }
     )
 
-    # ===================== 1. 班级留言墙（分页优化，解决大量数据卡顿） =====================
+    # ===================== 1. 班级留言墙 =====================
     if nav_menu == "班级留言墙":
         st.markdown("### 🍅 石榴16班留言墙 · 分享日常与毕业回忆")
         search_key = st.text_input("🔍 搜索帖子内容", placeholder="输入关键词筛选留言")
         st.divider()
 
-        # 发帖区域
         post_text = st.text_area("写下想和全班分享的话：", height=100, placeholder="在这里写下你的故事...")
         st.subheader("上传图片（最多9张，自动压缩）")
         upload_imgs = st.file_uploader("多选图片", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -570,10 +722,8 @@ else:
             st.success("🎉 留言发布成功！自动刷新可见")
             st.rerun()
 
-        # 帖子分页逻辑
         st.markdown("## 📜 全班所有人的留言")
         all_forum_raw = load_forum()
-        # 筛选搜索
         forum_filtered = []
         if search_key.strip():
             for item in all_forum_raw:
@@ -586,7 +736,6 @@ else:
         page_size = st.session_state.forum_page_size
         total_page = (total_post + page_size - 1) // page_size
 
-        # 分页控制器
         pg1, pg2, pg3 = st.columns([1,1,3])
         with pg1:
             if st.button("上一页") and st.session_state.forum_page > 1:
@@ -599,7 +748,6 @@ else:
         with pg3:
             st.caption(f"共 {total_post} 条留言，当前第 {st.session_state.forum_page}/{total_page} 页（每页{page_size}条）")
 
-        # 切片取当前页数据
         start_idx = (st.session_state.forum_page - 1) * page_size
         end_idx = start_idx + page_size
         forum_data = forum_filtered[start_idx:end_idx]
@@ -615,16 +763,13 @@ else:
                 full_text = item["text_content"]
                 short_text, need_expand = cut_long_text(full_text, 80)
 
-                # 作者+时间
                 st.write(f"**{item['author']}** · {item['create_time']}")
-                # 正文+全文按钮
                 t_col, btn_col = st.columns([8, 1])
                 with t_col:
                     st.write(short_text)
                 with btn_col:
                     if need_expand and st.button("全文", key=f"expand_{item['id']}"):
                         st.info(f"完整内容：{full_text}")
-                # 图片/视频
                 img_list = item.get("images", [])
                 if len(img_list) > 0:
                     st.markdown('<div class="img-grid">', unsafe_allow_html=True)
@@ -636,7 +781,6 @@ else:
                 if vid_b64:
                     vid_bin = base64.b64decode(vid_b64)
                     st.video(io.BytesIO(vid_bin))
-                # 底部交互栏
                 col_share, col_msg, col_like = st.columns([1,1,1])
                 with col_share:
                     st.write("🔁 转发 0")
@@ -645,36 +789,27 @@ else:
                 with col_like:
                     st.write(f"❤️ 点赞 {like_num}")
 
-                # hover操作栏
                 st.markdown('<div class="post-action-bar">', unsafe_allow_html=True)
-                # 点赞按钮
                 if st.button("❤️", key=f"like_{item['id']}"):
                     add_like(item["id"])
                     st.rerun()
 
-                # 楼中楼回复输入框（修复KeyError）
                 input_key = f"reply_input_{item['id']}"
                 if input_key not in st.session_state:
                     st.session_state[input_key] = ""
                 reply_input = st.text_input("楼中楼回复", key=input_key, placeholder="写下你的评论...")
 
-                # 提交回复
                 if st.button("提交回复", key=f"submit_reply_{item['id']}"):
                     content = reply_input.strip()
                     if not content:
                         st.warning("回复内容不能为空！")
                     else:
-                        try:
-                            t = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            insert_reply(item["id"], current_student, content, t)
-                            st.success("回复发送成功！")
-                            st.rerun()
-                        except Exception as err:
-                            st.error(f"回复失败：{str(err)}")
+                        t = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        insert_reply(item["id"], current_student, content, t)
+                        st.success("回复发送成功！")
+                        st.rerun()
 
-                # 评论分页展示
                 if all_replies:
-                    # 初始化该帖子评论页码
                     pid = str(item["id"])
                     if pid not in st.session_state.reply_page_map:
                         st.session_state.reply_page_map[pid] = 1
@@ -688,7 +823,6 @@ else:
                     with st.expander(f"展开全部回复 ({reply_count}) — 第{rp}/{total_rp}页"):
                         for r in reply_page_data:
                             st.write(f"{r['writer']} ({r['time']})：{r['content']}")
-                        # 评论分页切换
                         r1, r2 = st.columns([1,1])
                         with r1:
                             if st.button("上一页评论", key=f"rp_prev_{pid}") and rp>1:
@@ -702,7 +836,83 @@ else:
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===================== 2. 给同学写评语 =====================
+    # ===================== 2. 班级星光墙（新增模块） =====================
+    elif nav_menu == "班级星光墙":
+        st.markdown("### ✨ 班级星光墙 · 全班三国杀武将卡展示")
+        st.info("前往个人中心-编辑星光武将卡，上传头像、填写专属技能，卡片会在这里展示")
+        st.divider()
+        star_list = load_starwall()
+        if not star_list:
+            st.warning("暂无同学创建星光武将卡，快去编辑你的专属卡片吧！")
+        else:
+            # 3列网格布局展示武将卡
+            grid_cols = st.columns(3)
+            for idx, card in enumerate(star_list):
+                col = grid_cols[idx % 3]
+                with col:
+                    # 渲染武将卡片HTML
+                    avatar_html = ""
+                    if card["avatar_b64"]:
+                        avatar_html = f'<img class="star-card-avatar" src="data:image/jpeg;base64,{card["avatar_b64"]}"/>'
+                    else:
+                        avatar_html = '<div class="star-card-empty-avatar">👤</div>'
+                    card_html = f"""
+                    <div class="star-card-wrap">
+                        <div class="star-card" id="card_{card['username']}">
+                            <div class="star-card-avatar-box">
+                                {avatar_html}
+                            </div>
+                            <div class="star-card-body">
+                                <div class="star-card-title">{card['title'] if card['title'] else "无名少年"}</div>
+                                <div class="star-card-name">{card['student_name']}</div>
+                                <div class="star-skill-item">
+                                    <div class="star-skill-name">【{card['skill1_name'] if card['skill1_name'] else "未命名技能"}】</div>
+                                    <div class="star-skill-desc">{card['skill1_desc'] if card['skill1_desc'] else "暂无描述"}</div>
+                                </div>
+                                <div class="star-skill-item">
+                                    <div class="star-skill-name">【{card['skill2_name'] if card['skill2_name'] else "未命名技能"}】</div>
+                                    <div class="star-skill-desc">{card['skill2_desc'] if card['skill2_desc'] else "暂无描述"}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+                    st.markdown(card_html, unsafe_allow_html=True)
+                    # 点击查看详情按钮
+                    if st.button(f"查看 {card['student_name']} 完整档案", key=f"detail_{card['username']}"):
+                        st.session_state.current_star_detail = card
+                        st.rerun()
+        # 详情弹窗展示
+        if st.session_state.current_star_detail is not None:
+            detail = st.session_state.current_star_detail
+            st.divider()
+            st.markdown('<div class="star-detail-modal">', unsafe_allow_html=True)
+            d_col1, d_col2 = st.columns([1,2])
+            with d_col1:
+                if detail["avatar_b64"]:
+                    st.image(base64.b64decode(detail["avatar_b64"]), width=280)
+                else:
+                    st.markdown("<div style='font-size:120px;text-align:center;color:#c86666;'>👤</div>", unsafe_allow_html=True)
+            with d_col2:
+                st.header(f"{detail['student_name']} · {detail['title'] if detail['title'] else '无名少年'}")
+                st.subheader("人物背景")
+                st.write(detail["bio"] if detail["bio"] else "暂无人物简介")
+                st.divider()
+                st.subheader("武将技能")
+                st.markdown(f"""
+**一技能【{detail['skill1_name'] if detail['skill1_name'] else "无"}】**
+{detail['skill1_desc'] if detail['skill1_desc'] else "未填写技能描述"}
+
+**二技能【{detail['skill2_name'] if detail['skill2_name'] else "无"}】**
+{detail['skill2_desc'] if detail['skill2_desc'] else "未填写技能描述"}
+""")
+            st.divider()
+            if st.button("关闭详情"):
+                st.session_state.current_star_detail = None
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # ===================== 3. 给同学写评语 =====================
     elif nav_menu == "给同学写评语":
         st.markdown("### 🏷️ 自由写下评语，AI自动解析性格维度")
         target = st.selectbox("选择评价同学", CLASS_STUDENTS)
@@ -724,7 +934,7 @@ else:
                 st.write(f"预览：{t['comment'][:60]}……")
                 st.divider()
 
-    # ===================== 3. 我的专属档案 =====================
+    # ===================== 4. 我的专属档案 =====================
     elif nav_menu == "我的专属档案":
         st.markdown(f"### 💌 {current_student} 专属毕业档案（仅本人可见）")
         all_tag_list = load_tags()
@@ -739,7 +949,6 @@ else:
                 single_score = ai_calc_person_score(t["comment"])
                 for k in total_score.keys():
                     total_score[k] += single_score[k]
-            # 词云缓存
             if st.session_state.wordcloud_img is None:
                 wc = WordCloud(
                     background_color="#fff7f2",
@@ -750,7 +959,6 @@ else:
                 st.session_state.wordcloud_img = wc.to_image()
             st.markdown("#### 🔖 大家对你的描述词云")
             st.image(st.session_state.wordcloud_img, width=900)
-            # 雷达图
             if st.session_state.radar_fig is None:
                 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
                 plt.rcParams['axes.unicode_minus'] = False
@@ -776,7 +984,7 @@ else:
                 st.write(f"完整留言：{item['comment']}")
                 st.divider()
 
-    # ===================== 4. 班级时光大事记 =====================
+    # ===================== 5. 班级时光大事记 =====================
     elif nav_menu == "班级时光大事记":
         st.markdown("### 📅 班级时光大事记，支持上传配图")
         event_date = st.date_input("事件发生日期")
@@ -811,7 +1019,7 @@ else:
                     st.markdown('</div>', unsafe_allow_html=True)
                 st.divider()
 
-    # ===================== 5. 星海漂流瓶 =====================
+    # ===================== 6. 星海漂流瓶 =====================
     elif nav_menu == "星海漂流瓶":
         st.markdown("### 🌊 匿名漂流瓶 · 藏起毕业心事")
         col_throw, col_get = st.columns(2)
