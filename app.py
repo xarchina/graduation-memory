@@ -322,7 +322,7 @@ if "reply_page_size" not in st.session_state:
 if "wordcloud_img" not in st.session_state: st.session_state.wordcloud_img = None
 if "radar_fig" not in st.session_state: st.session_state.radar_fig = None
 
-CLASS_STUDENTS = [
+CLASS_STUDENTS = ["余微微老师","大chedi",
     '马浩然', '王一帆', '王原穗', '王韵琪', '卢芷清',
     '冯孝楚', '伍梓晨', '刘卓轩', '刘倩影', '汤乐宜',
     '李子杰', '李乐祺', '李辰', '李奕安', '李浩源',
