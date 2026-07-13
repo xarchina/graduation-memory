@@ -144,16 +144,29 @@ hr {
 .star-card-avatar-box {
     width: 100%;
     height: 220px;
+    aspect-ratio: 4 / 3;
     background: #f8e6e3;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
 }
+
 .star-card-avatar {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    object-position: center top;
+}
+
+.star-detail-avatar {
+    width: 100%;
+    max-width: 360px;
+    height: auto;
+    object-fit: contain;
+    border-radius: 16px;
+    border: 3px solid #e2a9a9;
+    box-shadow: 0 4px 12px rgba(200, 60, 60, 0.15);
 }
 .star-card-empty-avatar {
     font-size: 80px;
@@ -852,7 +865,7 @@ else:
                 with col:
                     # 渲染武将卡片HTML
                     avatar_html = ""
-                    if card["avatar_b64"]:
+                    if card.get("avatar_b64"):
                         avatar_html = f'<img class="star-card-avatar" src="data:image/jpeg;base64,{card["avatar_b64"]}"/>'
                     else:
                         avatar_html = '<div class="star-card-empty-avatar">👤</div>'
@@ -885,33 +898,77 @@ else:
         # 详情弹窗展示
         if st.session_state.current_star_detail is not None:
             detail = st.session_state.current_star_detail
+
+            # 合并个人中心档案信息
+            all_users = load_users()
+            all_profiles = load_profile()
+
+            view_uname = None
+            for k, v in all_users.items():
+                if v["name"] == detail["student_name"]:
+                    view_uname = k
+                    break
+
+            profile = None
+            if view_uname:
+                for p in all_profiles:
+                    if p["username"] == view_uname:
+                        profile = p
+                        break
+
             st.divider()
             st.markdown('<div class="star-detail-modal">', unsafe_allow_html=True)
-            d_col1, d_col2 = st.columns([1,2])
+
+            d_col1, d_col2 = st.columns([1, 2])
+
             with d_col1:
-                if detail["avatar_b64"]:
-                    st.image(base64.b64decode(detail["avatar_b64"]), width=280)
+                if detail.get("avatar_b64"):
+                    try:
+                        img_bytes = base64.b64decode(detail["avatar_b64"])
+                        st.image(img_bytes, use_column_width=True, clamp=True)
+                    except:
+                        st.markdown("<div style='font-size:120px;text-align:center;color:#c86666;'>👤</div>", unsafe_allow_html=True)
                 else:
                     st.markdown("<div style='font-size:120px;text-align:center;color:#c86666;'>👤</div>", unsafe_allow_html=True)
+
             with d_col2:
-                st.header(f"{detail['student_name']} · {detail['title'] if detail['title'] else '无名少年'}")
+                st.header(f"{detail['student_name']} · {detail.get('title') or '无名少年'}")
+
                 st.subheader("人物背景")
-                st.write(detail["bio"] if detail["bio"] else "暂无人物简介")
+                st.write(detail.get("bio") or "暂无人物简介")
+
                 st.divider()
+
+                st.subheader("个人档案信息")
+                if profile:
+                    st.markdown(f"""
+        **昵称：** {profile.get("nick", "未填写")}  
+        **爱好：** {profile.get("hobby", "未填写")}  
+        **未来理想：** {profile.get("dream", "未填写")}  
+        **座右铭：** {profile.get("motto", "未填写")}  
+        **联系方式：** {profile.get("contact", "未填写")}
+        """)
+                else:
+                    st.info("该同学暂未完善个人档案")
+
+                st.divider()
+
                 st.subheader("武将技能")
                 st.markdown(f"""
-**一技能【{detail['skill1_name'] if detail['skill1_name'] else "无"}】**
-{detail['skill1_desc'] if detail['skill1_desc'] else "未填写技能描述"}
+        **一技能【{detail.get("skill1_name") or "无"}】**  
+        {detail.get("skill1_desc") or "未填写技能描述"}
 
-**二技能【{detail['skill2_name'] if detail['skill2_name'] else "无"}】**
-{detail['skill2_desc'] if detail['skill2_desc'] else "未填写技能描述"}
-""")
+        **二技能【{detail.get("skill2_name") or "无"}】**  
+        {detail.get("skill2_desc") or "未填写技能描述"}
+        """)
+
             st.divider()
+
             if st.button("关闭详情"):
                 st.session_state.current_star_detail = None
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
 
+            st.markdown('</div>', unsafe_allow_html=True)
     # ===================== 3. 给同学写评语 =====================
     elif nav_menu == "给同学写评语":
         st.markdown("### 🏷️ 自由写下评语，AI自动解析性格维度")
